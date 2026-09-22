@@ -11,6 +11,10 @@ export default defineConfig({
       '@': resolve(__dirname, 'src')
     }
   },
+  build: {
+    outDir: resolve(__dirname, 'dist'),
+    emptyOutDir: true
+  },
   server: {
     port: 5173,
     host: true
