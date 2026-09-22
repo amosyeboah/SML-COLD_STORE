@@ -1,0 +1,1194 @@
+import { useState, useRef, useEffect, useMemo } from 'react'
+import { Link } from 'react-router-dom'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import {
+  Search,
+  Barcode,
+  PauseCircle,
+  MoreHorizontal,
+  ShoppingCart,
+  Trash2,
+  Minus,
+  Plus,
+  X,
+  CreditCard,
+  Smartphone,
+  Banknote,
+  ArrowRight,
+  Keyboard,
+  Maximize2,
+  Grid3X3,
+  List,
+  Package,
+  Snowflake,
+  Archive,
+  User,
+  CheckCircle2,
+  AlertCircle,
+  Play,
+} from 'lucide-react'
+import type { Category, Customer } from '@/types'
+import { cn } from '@/utils'
+import { enqueueSyncItem } from '@/services/sync/syncQueue'
+
+interface CartItem {
+  medicine: any
+  quantity: number
+  maxAvailable: number
+  validBatches: any[]
+  allocations: { batchId: string; batchNumber: string; expiryDate: string; quantity: number }[]
+}
+
+interface HeldSale {
+  id: string
+  timestamp: string
+  cart: CartItem[]
+  discountPercent: number
+  customerId?: string
+  paymentMethod: 'CASH' | 'MOBILE'
+}
+
+interface ToastMessage {
+  type: 'success' | 'error'
+  message: string
+}
+
+const CATEGORY_ICONS: Record<string, string> = {
+  poultry: '🍗',
+  chicken: '🍗',
+  fish: '🐟',
+  seafood: '🦐',
+  meat: '🥩',
+  beef: '🥩',
+  turkey: '🦃',
+  pork: '🥓',
+  sausage: '🌭',
+  french: '🍟',
+  fries: '🍟',
+  ice: '🍦',
+  dairy: '🧀',
+  vegetable: '🥦',
+}
+
+const CARD_GRADIENTS = [
+  'from-sky-100 to-blue-50',
+  'from-cyan-100 to-teal-50',
+  'from-blue-100 to-indigo-50',
+  'from-indigo-100 to-slate-50',
+  'from-amber-100 to-orange-50',
+  'from-emerald-100 to-green-50',
+  'from-violet-100 to-purple-50',
+  'from-rose-100 to-pink-50',
+]
+
+function getCategoryIcon(name: string) {
+  const key = name.toLowerCase()
+  for (const [k, icon] of Object.entries(CATEGORY_ICONS)) {
+    if (key.includes(k)) return icon
+  }
+  return '📦'
+}
+
+function getCardGradient(id: string) {
+  let hash = 0
+  for (let i = 0; i < id.length; i++) hash += id.charCodeAt(i)
+  return CARD_GRADIENTS[hash % CARD_GRADIENTS.length]
+}
+
+function allocateFEFO(validBatches: any[], requestedQty: number) {
+  const allocations: { batchId: string; batchNumber: string; expiryDate: string; quantity: number }[] = []
+  let needed = requestedQty
+  for (const b of validBatches) {
+    if (needed <= 0) break
+    const take = Math.min(b.quantity, needed)
+    allocations.push({
+      batchId: b.id,
+      batchNumber: b.batchNumber,
+      expiryDate: b.expiryDate,
+      quantity: take,
+    })
+    needed -= take
+  }
+  return allocations
+}
+
+function MedicineCard({ product, onAdd }: { product: any; onAdd: () => void }) {
+  const med = product.medicine
+  const inStock = product.totalStock > 0
+
+  return (
+    <div className="group flex flex-col overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-sm transition-all hover:border-blue-200 hover:shadow-md">
+      <div className={cn('relative flex h-[110px] items-center justify-center bg-gradient-to-br', getCardGradient(med.id))}>
+        <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-white/70 shadow-sm backdrop-blur-sm">
+          <Package className="h-8 w-8 text-sky-600/80" />
+        </div>
+      </div>
+      <div className="flex flex-1 flex-col gap-2 p-3.5">
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-sm font-bold leading-tight text-slate-800">{med.name}</p>
+          <p className="mt-0.5 truncate text-[11px] text-slate-400">
+            {med.genericName || med.category?.name || `${product.batchCount} batch(es)`}
+          </p>
+        </div>
+        <div className="flex items-end justify-between gap-2">
+          <div>
+            <p className="text-base font-bold text-slate-900">₵{med.price.toFixed(2)}</p>
+            <p className={cn('mt-0.5 text-[11px] font-medium', inStock ? 'text-slate-500' : 'text-red-500')}>
+              {inStock ? `Stock: ${product.totalStock} cartons` : 'Out of Stock'}
+            </p>
+          </div>
+          <button
+            onClick={onAdd}
+            disabled={!inStock}
+            className={cn(
+              'flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full transition-all',
+              inStock
+                ? 'bg-blue-600 text-white shadow-sm hover:bg-blue-700 active:scale-95'
+                : 'cursor-not-allowed bg-slate-100 text-slate-300'
+            )}
+          >
+            <Plus className="h-4 w-4" />
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+const PAGE_SIZE = 12
+
+function CartPanelContent({
+  cart,
+  clearCart,
+  selectedCustomerId,
+  setSelectedCustomerId,
+  customers,
+  removeFromCart,
+  updateQty,
+  enableDiscount,
+  discountPercent,
+  setDiscountPercent,
+  subtotal,
+  discountAmt,
+  enableTax,
+  taxRate,
+  tax,
+  total,
+  currencySymbol,
+  paymentMethod,
+  setPaymentMethod,
+  handleCheckout,
+  createSaleMutation,
+  setToast,
+  onClose,
+}: any) {
+  return (
+    <div className="flex flex-1 flex-col overflow-hidden bg-[#fafbfc]">
+      <div className="flex items-center justify-between border-b border-slate-200/80 bg-white px-4 py-3.5">
+        <h3 className="text-sm font-bold text-slate-800">Current Sale</h3>
+        <div className="flex items-center gap-1">
+          <button
+            onClick={clearCart}
+            disabled={cart.length === 0}
+            className="rounded-lg p-1.5 text-red-400 transition-colors hover:bg-red-50 hover:text-red-500 disabled:opacity-30"
+          >
+            <Trash2 className="h-4 w-4" />
+          </button>
+          {onClose && (
+            <button
+              onClick={onClose}
+              className="lg:hidden rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+            >
+              <X className="h-5 w-5" />
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Customer selection */}
+      <div className="border-b border-slate-200/80 bg-white px-4 py-2.5">
+        <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-2.5 py-1.5">
+          <User className="h-3.5 w-3.5 text-slate-400" />
+          <select
+            value={selectedCustomerId}
+            onChange={(e) => setSelectedCustomerId(e.target.value)}
+            className="w-full bg-transparent text-xs font-medium text-slate-700 outline-none"
+          >
+            <option value="">Walk-in Customer</option>
+            {customers.map((c: any) => (
+              <option key={c.id} value={c.id}>
+                {c.name} ({c.phone || 'No phone'})
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
+
+      <div className="flex-1 space-y-2 overflow-y-auto px-3 py-2">
+        {cart.length === 0 ? (
+          <div className="flex h-full flex-col items-center justify-center py-8 text-slate-300">
+            <ShoppingCart className="mb-2 h-10 w-10" />
+            <p className="text-xs font-medium text-slate-400">Cart is empty</p>
+            <p className="mt-1 text-[11px] text-slate-300">Select frozen products to start checkout</p>
+          </div>
+        ) : (
+          cart.map((item: any) => (
+            <div
+              key={item.medicine.id}
+              className="flex flex-col gap-1.5 rounded-xl border border-slate-200/80 bg-white p-3 shadow-sm"
+            >
+              <div className="flex items-start gap-2.5">
+                <div
+                  className={cn(
+                    'flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg bg-gradient-to-br',
+                    getCardGradient(item.medicine.id)
+                  )}
+                >
+                  <Snowflake className="h-4 w-4 text-sky-500/80" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-xs font-bold leading-tight text-slate-800">
+                    {item.medicine.name}
+                  </p>
+                  <p className="truncate text-[10px] text-slate-400">
+                    {currencySymbol}{item.medicine.price.toFixed(2)} each
+                  </p>
+                </div>
+                <div className="flex flex-shrink-0 flex-col items-end">
+                  <p className="text-xs font-bold text-slate-800">
+                    {currencySymbol}{(item.medicine.price * item.quantity).toFixed(2)}
+                  </p>
+                  <button
+                    onClick={() => removeFromCart(item.medicine.id)}
+                    className="mt-1 text-slate-300 transition-colors hover:text-red-500"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between pt-1">
+                <span className="text-[11px] text-slate-500">Qty:</span>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    onClick={() => updateQty(item.medicine.id, -1)}
+                    className="flex h-7 w-7 sm:h-6 sm:w-6 items-center justify-center rounded-md border border-slate-200 text-slate-600 hover:bg-slate-50 active:scale-95"
+                  >
+                    <Minus className="h-3.5 w-3.5 sm:h-3 sm:w-3" />
+                  </button>
+                  <span className="w-6 text-center text-xs font-bold text-slate-800">{item.quantity}</span>
+                  <button
+                    onClick={() => updateQty(item.medicine.id, 1)}
+                    disabled={item.quantity >= item.maxAvailable}
+                    className="flex h-7 w-7 sm:h-6 sm:w-6 items-center justify-center rounded-md border border-slate-200 text-slate-600 hover:bg-slate-50 active:scale-95 disabled:opacity-30"
+                  >
+                    <Plus className="h-3.5 w-3.5 sm:h-3 sm:w-3" />
+                  </button>
+                </div>
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+
+      {enableDiscount && (
+        <div className="border-t border-slate-200/80 bg-white px-4 py-3">
+          <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+            <span className="flex-shrink-0 text-[11px] font-medium text-slate-500">% Discount</span>
+            <input
+              type="number"
+              min="0"
+              max="100"
+              step="0.01"
+              value={discountPercent || ''}
+              onChange={(e) => setDiscountPercent(Math.min(100, Number(e.target.value) || 0))}
+              placeholder="0.00"
+              className="w-full bg-transparent text-right text-xs font-semibold text-slate-700 outline-none"
+            />
+          </div>
+        </div>
+      )}
+
+      <div className="space-y-2 border-t border-slate-200/80 bg-white px-4 py-3">
+        <div className="flex items-center justify-between text-xs text-slate-500">
+          <span>Subtotal</span>
+          <span className="font-medium text-slate-700">{currencySymbol}{subtotal.toFixed(2)}</span>
+        </div>
+        {enableDiscount && (
+          <div className="flex items-center justify-between text-xs text-slate-500">
+            <span>Discount ({discountPercent}%)</span>
+            <span className="font-medium text-slate-700">-{currencySymbol}{discountAmt.toFixed(2)}</span>
+          </div>
+        )}
+        {enableTax && (
+          <div className="flex items-center justify-between text-xs text-slate-500">
+            <span>Tax (VAT {taxRate}%)</span>
+            <span className="font-medium text-slate-700">{currencySymbol}{tax.toFixed(2)}</span>
+          </div>
+        )}
+        <div className="flex items-center justify-between border-t border-slate-100 pt-2">
+          <span className="text-sm font-bold text-slate-800">Total</span>
+          <span className="text-lg font-bold text-blue-600">{currencySymbol}{total.toFixed(2)}</span>
+        </div>
+      </div>
+
+      <div className="bg-white px-4 pb-3">
+        <div className="mb-3 grid grid-cols-2 gap-2">
+          <button
+            onClick={() => setPaymentMethod('CASH')}
+            className={cn(
+              'flex flex-col items-center gap-1 rounded-xl py-2.5 text-[11px] font-bold text-white transition-all active:scale-95',
+              paymentMethod === 'CASH' && 'ring-2 ring-green-400 ring-offset-1'
+            )}
+            style={{ background: 'linear-gradient(135deg, #22c55e, #16a34a)' }}
+          >
+            <Banknote className="h-4 w-4" />
+            Cash
+          </button>
+          <button
+            onClick={() => setPaymentMethod('MOBILE')}
+            className={cn(
+              'flex flex-col items-center gap-1 rounded-xl py-2.5 text-[11px] font-bold text-white transition-all active:scale-95',
+              paymentMethod === 'MOBILE' && 'ring-2 ring-amber-400 ring-offset-1'
+            )}
+            style={{ background: 'linear-gradient(135deg, #f59e0b, #ea580c)' }}
+          >
+            <Smartphone className="h-4 w-4" />
+            Mobile
+          </button>
+        </div>
+
+        <button
+          onClick={() => {
+            handleCheckout()
+            if (onClose) onClose()
+          }}
+          disabled={cart.length === 0 || createSaleMutation.isPending}
+          className="flex w-full items-center justify-center gap-2 rounded-xl py-3.5 text-sm font-bold text-white shadow-md transition-all hover:opacity-95 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-50"
+          style={{ background: 'linear-gradient(135deg, #1d4ed8 0%, #4f46e5 100%)' }}
+        >
+          {createSaleMutation.isPending ? 'Processing...' : `Checkout (${currencySymbol}${total.toFixed(2)})`}
+          {!createSaleMutation.isPending && <ArrowRight className="h-4 w-4" />}
+        </button>
+      </div>
+
+      <div className="grid grid-cols-2 gap-2 bg-white px-4 pb-4">
+        <button
+          onClick={() => setToast({ type: 'success', message: 'Cash drawer trigger sent' })}
+          className="flex items-center justify-center gap-1.5 rounded-xl border border-slate-200 py-2 text-xs font-medium text-slate-500 transition-colors hover:bg-slate-50 active:scale-95"
+        >
+          <Archive className="h-3.5 w-3.5" />
+          Open Drawer
+        </button>
+        <button
+          onClick={clearCart}
+          disabled={cart.length === 0}
+          className="flex items-center justify-center gap-1.5 rounded-xl border border-red-200 py-2 text-xs font-medium text-red-500 transition-colors hover:bg-red-50 active:scale-95 disabled:opacity-40"
+        >
+          <Trash2 className="h-3.5 w-3.5" />
+          Clear Cart
+        </button>
+      </div>
+    </div>
+  )
+}
+
+export default function POS() {
+  const queryClient = useQueryClient()
+  const [searchQuery, setSearchQuery] = useState('')
+  const [activeCategory, setActiveCategory] = useState('all')
+  const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid')
+  const [page, setPage] = useState(1)
+  const [cart, setCart] = useState<CartItem[]>([])
+  const [discountPercent, setDiscountPercent] = useState<number>(0)
+  const [paymentMethod, setPaymentMethod] = useState<'CASH' | 'MOBILE'>('CASH')
+  const [selectedCustomerId, setSelectedCustomerId] = useState<string>('')
+  const [heldSales, setHeldSales] = useState<HeldSale[]>([])
+  const [isHeldModalOpen, setIsHeldModalOpen] = useState(false)
+  const [isCartDrawerOpen, setIsCartDrawerOpen] = useState(false)
+  const [toast, setToast] = useState<ToastMessage | null>(null)
+  const searchRef = useRef<HTMLInputElement>(null)
+
+  // Auto-dismiss toasts
+  useEffect(() => {
+    if (!toast) return
+    const timer = setTimeout(() => setToast(null), 3500)
+    return () => clearTimeout(timer)
+  }, [toast])
+
+  const { data: batches = [] } = useQuery<any[]>({
+    queryKey: ['batches'],
+    queryFn: () => window.api.getBatches(),
+  })
+
+  const { data: categories = [] } = useQuery<Category[]>({
+    queryKey: ['categories'],
+    queryFn: () => window.api.getCategories(),
+  })
+
+  const { data: customers = [] } = useQuery<Customer[]>({
+    queryKey: ['customers'],
+    queryFn: () => window.api.getCustomers(),
+  })
+
+  const { data: storedSettings = {} } = useQuery<Record<string, string>>({
+    queryKey: ['settings'],
+    queryFn: () => window.api.getSettings(),
+  })
+
+  const enableDiscount = storedSettings['pos.enableDiscount'] === 'true'
+  const enableTax = storedSettings['pos.enableTax'] === 'true'
+  const taxRate = enableTax ? (Number(storedSettings['pos.taxRate']) || 0) : 0
+  const currencySymbol = storedSettings['biz.currencySymbol'] || '₵'
+
+  // Group valid non-expired batches by Medicine for POS display & auto FEFO allocation
+  const productsList = useMemo(() => {
+    const today = new Date()
+    today.setHours(0, 0, 0, 0)
+
+    const medMap = new Map<string, { medicine: any; validBatches: any[]; totalStock: number }>()
+
+    for (const b of batches) {
+      if (b.quantity <= 0) continue
+      const exp = new Date(b.expiryDate)
+      exp.setHours(0, 0, 0, 0)
+      if (exp < today) continue // Exclude expired batches strictly!
+
+      const medId = b.medicine?.id || b.medicineId
+      if (!medId) continue
+
+      if (!medMap.has(medId)) {
+        medMap.set(medId, {
+          medicine: b.medicine,
+          validBatches: [],
+          totalStock: 0,
+        })
+      }
+      const entry = medMap.get(medId)!
+      entry.validBatches.push(b)
+      entry.totalStock += b.quantity
+    }
+
+    const products: any[] = []
+    for (const entry of medMap.values()) {
+      // Sort batches ascending by expiry date (First Expired, First Out)
+      entry.validBatches.sort((a, b) => new Date(a.expiryDate).getTime() - new Date(b.expiryDate).getTime())
+      products.push({
+        id: entry.medicine.id,
+        medicine: entry.medicine,
+        totalStock: entry.totalStock,
+        validBatches: entry.validBatches,
+        earliestExpiry: entry.validBatches[0]?.expiryDate,
+        batchCount: entry.validBatches.length,
+      })
+    }
+
+    return products
+  }, [batches])
+
+  const subtotal = cart.reduce((acc, i) => acc + i.medicine.price * i.quantity, 0)
+  const discountAmt = enableDiscount ? (subtotal * discountPercent) / 100 : 0
+  const tax = enableTax ? ((subtotal - discountAmt) * taxRate) / 100 : 0
+  const total = Math.max(0, subtotal - discountAmt + tax)
+
+  const createSaleMutation = useMutation({
+    mutationFn: (data: any) => window.api.createSale(data),
+    onSuccess: async (sale) => {
+      queryClient.invalidateQueries({ queryKey: ['batches'] })
+      queryClient.invalidateQueries({ queryKey: ['dashboard'] })
+      const storeName = storedSettings['biz.name'] || 'SML LEGACY LIMITED'
+      const tagline = storedSettings['biz.tagline'] || 'Quality Frozen Foods & Cold Storage'
+      const phone = storedSettings['biz.phone'] || '+233 54 386 4610'
+      const ownerPhone = storedSettings['biz.ownerPhone'] || '+447999007775'
+      const email = storedSettings['biz.email'] || 'sorphygold@yahoo.com'
+      const footer = storedSettings['receipt.footerText'] || 'Thank you for choosing SML Legacy! Keep frozen at -18°C.'
+      const discountLine = enableDiscount && discountAmt > 0 ? `<tr><td style="padding:2px 0;">Discount (${discountPercent}%):</td><td colspan="2" style="text-align:right;">-${currencySymbol}${discountAmt.toFixed(2)}</td></tr>` : ''
+      const taxLine = enableTax && tax > 0 ? `<tr><td style="padding:2px 0;">Tax (${taxRate}%):</td><td colspan="2" style="text-align:right;">${currencySymbol}${tax.toFixed(2)}</td></tr>` : ''
+      const subtotalLine = (enableDiscount && discountAmt > 0) || (enableTax && tax > 0) ? `<tr><td style="padding:2px 0;">Subtotal:</td><td colspan="2" style="text-align:right;">${currencySymbol}${subtotal.toFixed(2)}</td></tr>` : ''
+
+      const receiptHTML = `
+        <div style="font-family:'Courier New',Courier,monospace;width:290px;padding:12px;margin:0 auto;color:#000;font-size:12px;">
+          <h2 style="text-align:center;margin:0 0 4px 0;font-size:16px;font-weight:bold;">${storeName.toUpperCase()}</h2>
+          <p style="text-align:center;margin:0;font-size:11px;">${tagline}</p>
+          <p style="text-align:center;margin:2px 0 0 0;font-size:10px;">Store Tel: ${phone}</p>
+          <p style="text-align:center;margin:2px 0 0 0;font-size:10px;">WhatsApp: ${ownerPhone} | ${email}</p>
+          <hr style="border-top:1px dashed #000;margin:8px 0;"/>
+          <p style="margin:2px 0;font-size:11px;">Date: ${new Date().toLocaleString('en-GB')}</p>
+          <p style="margin:2px 0;font-size:11px;">Receipt: INV-${sale.id.slice(0, 8).toUpperCase()}</p>
+          <p style="margin:2px 0;font-size:11px;">Payment: ${paymentMethod}</p>
+          <hr style="border-top:1px dashed #000;margin:8px 0;"/>
+          <table style="width:100%;font-size:11px;border-collapse:collapse;">
+            <thead>
+              <tr style="border-bottom:1px solid #000;text-align:left;">
+                <th style="padding:2px 0;">Item</th>
+                <th style="text-align:center;padding:2px 0;">Qty</th>
+                <th style="text-align:right;padding:2px 0;">Total</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${cart.map((item) => `
+                <tr>
+                  <td style="padding:3px 0;max-width:150px;word-break:break-word;">${item.medicine.name}</td>
+                  <td style="text-align:center;vertical-align:top;padding:3px 0;">${item.quantity}</td>
+                  <td style="text-align:right;vertical-align:top;padding:3px 0;">${currencySymbol}${(item.medicine.price * item.quantity).toFixed(2)}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+          <hr style="border-top:1px dashed #000;margin:8px 0;"/>
+          <table style="width:100%;font-size:11px;">
+            ${subtotalLine}
+            ${discountLine}
+            ${taxLine}
+            <tr>
+              <td style="padding:4px 0;font-weight:bold;font-size:13px;">GRAND TOTAL:</td>
+              <td colspan="2" style="text-align:right;font-weight:bold;font-size:14px;">${currencySymbol}${total.toFixed(2)}</td>
+            </tr>
+          </table>
+          <hr style="border-top:1px dashed #000;margin:8px 0;"/>
+          <p style="text-align:center;margin:6px 0 2px 0;font-size:11px;font-weight:bold;">${footer}</p>
+          <p style="text-align:center;margin:0;font-size:9px;color:#333;">Goods sold in good condition are not returnable once defrosted.</p>
+        </div>`
+      await window.api.printReceipt(receiptHTML)
+
+      // Automatically enqueue to offline sync queue for UK Owner cloud update
+      try {
+        enqueueSyncItem('SALE', 'INSERT', {
+          id: sale.id,
+          total,
+          paymentMethod,
+          date: new Date().toISOString(),
+          customerName: customers.find((c) => c.id === selectedCustomerId)?.name || 'Walk-in Customer',
+          items: cart.map((item) => ({
+            medicineId: item.medicine.id,
+            name: item.medicine.name,
+            sku: item.medicine.sku,
+            quantity: item.quantity,
+            price: item.price,
+            cost: item.medicine.cost,
+          })),
+        })
+      } catch (syncErr) {
+        console.warn('Sync enqueue notice:', syncErr)
+      }
+
+      setCart([])
+      setDiscountPercent(0)
+      setSelectedCustomerId('')
+      setIsCartDrawerOpen(false)
+      setToast({ type: 'success', message: 'Sale checkout completed successfully!' })
+    },
+    onError: (err: any) => {
+      setToast({ type: 'error', message: err?.message || 'Sale checkout failed' })
+    },
+  })
+
+  const categoryList = useMemo(
+    () => [
+      { id: 'all', label: 'All Products', icon: '❄️' },
+      ...categories.map((c) => ({ id: c.id, label: c.name, icon: getCategoryIcon(c.name) })),
+      { id: 'other', label: 'Others', icon: '···' },
+    ],
+    [categories]
+  )
+
+  const activeCategoryLabel = categoryList.find((c) => c.id === activeCategory)?.label ?? 'All Products'
+
+  const filteredProducts = useMemo(() => {
+    const q = searchQuery.toLowerCase().trim()
+    return productsList.filter((p) => {
+      const matchSearch =
+        !q ||
+        p.medicine.name.toLowerCase().includes(q) ||
+        p.medicine.genericName?.toLowerCase().includes(q) ||
+        p.medicine.sku?.toLowerCase().includes(q)
+      const matchCategory =
+        activeCategory === 'all' ||
+        (activeCategory === 'other'
+          ? !categories.some((c) => c.id === p.medicine.categoryId)
+          : p.medicine.categoryId === activeCategory)
+      return matchSearch && matchCategory
+    })
+  }, [productsList, searchQuery, activeCategory, categories])
+
+  const totalPages = Math.max(1, Math.ceil(filteredProducts.length / PAGE_SIZE))
+  const pageProducts = filteredProducts.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
+
+  useEffect(() => {
+    setPage(1)
+  }, [searchQuery, activeCategory])
+
+  const addToCart = (product: any) => {
+    setCart((prev) => {
+      const existing = prev.find((i) => i.medicine.id === product.id)
+      const currentQty = existing ? existing.quantity : 0
+      const newQty = currentQty + 1
+      if (newQty > product.totalStock) {
+        setToast({ type: 'error', message: `Cannot add more ${product.medicine.name}. Max available stock is ${product.totalStock}.` })
+        return prev
+      }
+
+      const newAllocations = allocateFEFO(product.validBatches, newQty)
+
+      if (existing) {
+        return prev.map((i) =>
+          i.medicine.id === product.id ? { ...i, quantity: newQty, allocations: newAllocations } : i
+        )
+      }
+
+      return [
+        ...prev,
+        {
+          medicine: product.medicine,
+          quantity: 1,
+          maxAvailable: product.totalStock,
+          validBatches: product.validBatches,
+          allocations: newAllocations,
+        },
+      ]
+    })
+  }
+
+  const handleSearchKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      if (!searchQuery.trim()) return
+      const q = searchQuery.toLowerCase().trim()
+      const exactMatch = filteredProducts.find(
+        (p) => p.medicine.sku?.toLowerCase() === q || p.medicine.name.toLowerCase() === q
+      )
+      const target = exactMatch || (filteredProducts.length === 1 ? filteredProducts[0] : null)
+      if (target) {
+        addToCart(target)
+        setSearchQuery('')
+        setToast({ type: 'success', message: `Added ${target.medicine.name} to cart` })
+      } else if (filteredProducts.length > 1) {
+        setToast({ type: 'error', message: `Multiple matches (${filteredProducts.length}). Select product from list.` })
+      } else {
+        setToast({ type: 'error', message: 'No matching product found.' })
+      }
+    }
+  }
+
+  const updateQty = (medicineId: string, delta: number) => {
+    setCart((prev) =>
+      prev
+        .map((item) => {
+          if (item.medicine.id !== medicineId) return item
+          const newQty = item.quantity + delta
+          if (newQty <= 0) return { ...item, quantity: 0 }
+          if (newQty > item.maxAvailable) {
+            setToast({ type: 'error', message: `Maximum stock for ${item.medicine.name} is ${item.maxAvailable}` })
+            return item
+          }
+          const newAllocations = allocateFEFO(item.validBatches, newQty)
+          return { ...item, quantity: newQty, allocations: newAllocations }
+        })
+        .filter((item) => item.quantity > 0)
+    )
+  }
+
+  const removeFromCart = (medicineId: string) => setCart((prev) => prev.filter((i) => i.medicine.id !== medicineId))
+  const clearCart = () => setCart([])
+
+  const handleHoldSale = () => {
+    if (cart.length === 0) {
+      setToast({ type: 'error', message: 'Cart is empty! Nothing to hold.' })
+      return
+    }
+    const newHold: HeldSale = {
+      id: Date.now().toString(),
+      timestamp: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
+      cart: [...cart],
+      discountPercent,
+      customerId: selectedCustomerId,
+      paymentMethod,
+    }
+    setHeldSales((prev) => [newHold, ...prev])
+    setCart([])
+    setDiscountPercent(0)
+    setSelectedCustomerId('')
+    setIsCartDrawerOpen(false)
+    setToast({ type: 'success', message: 'Sale held successfully.' })
+  }
+
+  const handleResumeSale = (held: HeldSale) => {
+    setCart(held.cart)
+    setDiscountPercent(held.discountPercent)
+    if (held.customerId) setSelectedCustomerId(held.customerId)
+    if (held.paymentMethod) setPaymentMethod(held.paymentMethod)
+    setHeldSales((prev) => prev.filter((h) => h.id !== held.id))
+    setIsHeldModalOpen(false)
+    setToast({ type: 'success', message: 'Held sale resumed.' })
+  }
+
+  const handleDeleteHeldSale = (id: string) => {
+    setHeldSales((prev) => prev.filter((h) => h.id !== id))
+  }
+
+  const handleCheckout = () => {
+    if (cart.length === 0) return
+
+    const items = cart.flatMap((c) =>
+      c.allocations.map((a) => ({
+        batchId: a.batchId,
+        quantity: a.quantity,
+        price: c.medicine.price,
+      }))
+    )
+
+    createSaleMutation.mutate({
+      paymentMethod,
+      total,
+      items,
+      customerId: selectedCustomerId || undefined,
+    })
+  }
+
+  const paginationPages = useMemo(() => {
+    if (totalPages <= 7) return Array.from({ length: totalPages }, (_, i) => i + 1)
+    const pages: (number | 'ellipsis')[] = [1]
+    if (page > 3) pages.push('ellipsis')
+    for (let p = Math.max(2, page - 1); p <= Math.min(totalPages - 1, page + 1); p++) pages.push(p)
+    if (page < totalPages - 2) pages.push('ellipsis')
+    pages.push(totalPages)
+    return pages
+  }, [page, totalPages])
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+        e.preventDefault()
+        searchRef.current?.focus()
+      }
+      if (e.key === 'F1') {
+        e.preventDefault()
+        clearCart()
+      }
+      if (e.key === 'F2') {
+        e.preventDefault()
+        handleHoldSale()
+      }
+      if (e.key === 'F4') {
+        e.preventDefault()
+        searchRef.current?.focus()
+      }
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [cart])
+
+  return (
+    <div className="flex h-full flex-col bg-[#f8f9fb] font-sans">
+      {/* Toast Notification Banner */}
+      {toast && (
+        <div className="fixed top-4 right-4 z-50 flex items-center gap-2 rounded-xl border px-4 py-3 shadow-lg backdrop-blur-md transition-all animate-in fade-in slide-in-from-top-2 duration-200">
+          {toast.type === 'success' ? (
+            <CheckCircle2 className="h-5 w-5 text-emerald-500" />
+          ) : (
+            <AlertCircle className="h-5 w-5 text-red-500" />
+          )}
+          <span className={cn('text-xs font-semibold', toast.type === 'success' ? 'text-emerald-800' : 'text-red-800')}>
+            {toast.message}
+          </span>
+          <button onClick={() => setToast(null)} className="ml-2 text-slate-400 hover:text-slate-600">
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      )}
+
+      {/* Held Sales Modal */}
+      {isHeldModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-lg max-h-[85vh] flex flex-col rounded-2xl border border-slate-200 bg-white p-5 sm:p-6 shadow-2xl">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div className="flex items-center gap-2">
+                <PauseCircle className="h-5 w-5 text-blue-600" />
+                <h3 className="text-base font-bold text-slate-800">Held Sales ({heldSales.length})</h3>
+              </div>
+              <button onClick={() => setIsHeldModalOpen(false)} className="rounded-lg p-1 text-slate-400 hover:bg-slate-100">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="my-4 flex-1 space-y-3 overflow-y-auto pr-1">
+              {heldSales.length === 0 ? (
+                <p className="py-8 text-center text-xs text-slate-400">No held sales stored.</p>
+              ) : (
+                heldSales.map((h) => {
+                  const heldTotal = h.cart.reduce((s, i) => s + i.medicine.price * i.quantity, 0)
+                  return (
+                    <div key={h.id} className="flex items-center justify-between rounded-xl border border-slate-200 bg-slate-50 p-3">
+                      <div>
+                        <p className="text-xs font-bold text-slate-800">Hold at {h.timestamp}</p>
+                        <p className="text-[11px] text-slate-500">
+                          {h.cart.length} item(s) • Total: {currencySymbol}{heldTotal.toFixed(2)}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => handleResumeSale(h)}
+                          className="flex items-center gap-1 rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-700 active:scale-95"
+                        >
+                          <Play className="h-3 w-3" /> Resume
+                        </button>
+                        <button
+                          onClick={() => handleDeleteHeldSale(h.id)}
+                          className="rounded-lg p-1.5 text-slate-400 hover:bg-red-50 hover:text-red-500 active:scale-95"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                  )
+                })
+              )}
+            </div>
+            <button
+              onClick={() => setIsHeldModalOpen(false)}
+              className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2.5 text-xs font-semibold text-slate-600 hover:bg-slate-100"
+            >
+              Close
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Mobile / Tablet Slide-Over Cart Drawer */}
+      {isCartDrawerOpen && (
+        <div className="fixed inset-0 z-50 flex justify-end bg-black/40 backdrop-blur-xs lg:hidden">
+          <div className="h-full w-full max-w-[340px] sm:max-w-[380px] bg-white flex flex-col shadow-2xl animate-in slide-in-from-right duration-200">
+            <CartPanelContent
+              cart={cart}
+              clearCart={clearCart}
+              selectedCustomerId={selectedCustomerId}
+              setSelectedCustomerId={setSelectedCustomerId}
+              customers={customers}
+              removeFromCart={removeFromCart}
+              updateQty={updateQty}
+              enableDiscount={enableDiscount}
+              discountPercent={discountPercent}
+              setDiscountPercent={setDiscountPercent}
+              subtotal={subtotal}
+              discountAmt={discountAmt}
+              enableTax={enableTax}
+              taxRate={taxRate}
+              tax={tax}
+              total={total}
+              currencySymbol={currencySymbol}
+              paymentMethod={paymentMethod}
+              setPaymentMethod={setPaymentMethod}
+              handleCheckout={handleCheckout}
+              createSaleMutation={createSaleMutation}
+              setToast={setToast}
+              onClose={() => setIsCartDrawerOpen(false)}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* Top bar */}
+      <div className="flex flex-wrap lg:flex-nowrap flex-shrink-0 items-center justify-between gap-2.5 sm:gap-3 border-b border-slate-200/80 bg-white px-3 sm:px-5 py-2.5 sm:py-3 shadow-sm">
+        <div className="flex-1 min-w-[200px] max-w-full lg:max-w-[680px] flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 sm:px-4 py-2 transition-all focus-within:border-blue-300 focus-within:bg-white focus-within:shadow-sm">
+          <Search className="h-4 w-4 flex-shrink-0 text-slate-400" />
+          <input
+            ref={searchRef}
+            type="text"
+            placeholder="Search frozen product or scan barcode..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            onKeyDown={handleSearchKeyDown}
+            className="min-w-0 flex-1 bg-transparent text-xs sm:text-sm text-slate-700 outline-none placeholder:text-slate-400"
+          />
+          <span className="hidden md:inline-flex flex-shrink-0 rounded bg-slate-200/80 px-1.5 py-0.5 font-mono text-[10px] text-slate-500">
+            Ctrl + K
+          </span>
+        </div>
+
+        <div className="flex items-center gap-2 flex-wrap">
+          <button
+            onClick={() => searchRef.current?.focus()}
+            className="hidden sm:flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs sm:text-sm font-medium text-slate-600 transition-colors hover:bg-slate-50 active:scale-95"
+          >
+            <Barcode className="h-4 w-4 text-blue-600" />
+            <span>Scan Barcode</span>
+          </button>
+
+          <button
+            onClick={handleHoldSale}
+            className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs sm:text-sm font-medium text-slate-600 transition-colors hover:bg-slate-50 active:scale-95"
+          >
+            <PauseCircle className="h-4 w-4 text-amber-500" />
+            <span>Hold</span>
+            {heldSales.length > 0 && (
+              <span className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-700">
+                {heldSales.length}
+              </span>
+            )}
+          </button>
+
+          {heldSales.length > 0 && (
+            <button
+              onClick={() => setIsHeldModalOpen(true)}
+              className="flex items-center gap-1.5 rounded-xl bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-700 border border-amber-200 hover:bg-amber-100 active:scale-95"
+            >
+              <Play className="h-3.5 w-3.5" /> Resume ({heldSales.length})
+            </button>
+          )}
+
+          <button
+            onClick={() => setIsCartDrawerOpen(!isCartDrawerOpen)}
+            className="flex items-center gap-2 rounded-xl px-3.5 py-2 text-xs sm:text-sm font-semibold text-white shadow-sm transition-all hover:opacity-95 active:scale-95 flex-shrink-0"
+            style={{ background: 'linear-gradient(135deg, #2563eb 0%, #4f46e5 100%)' }}
+          >
+            <ShoppingCart className="h-4 w-4" />
+            <span className="hidden sm:inline">Current Sale</span>
+            <span className="flex h-5 min-w-[20px] items-center justify-center rounded-full bg-white px-1.5 text-[11px] font-bold text-blue-600">
+              {cart.reduce((n, i) => n + i.quantity, 0)} ({currencySymbol}{total.toFixed(2)})
+            </span>
+          </button>
+        </div>
+      </div>
+
+      {/* Horizontal Category bar for tablet / mobile view (< lg:) */}
+      <div className="lg:hidden flex-shrink-0 border-b border-slate-200/80 bg-white px-3 py-2 overflow-x-auto scrollbar-none flex items-center gap-1.5">
+        {categoryList.map((cat) => (
+          <button
+            key={cat.id}
+            onClick={() => setActiveCategory(cat.id)}
+            className={cn(
+              'flex items-center gap-1.5 rounded-xl border px-3 py-1.5 text-xs font-semibold whitespace-nowrap transition-all flex-shrink-0 active:scale-95',
+              activeCategory === cat.id
+                ? 'border-blue-200 bg-blue-50 text-blue-700 shadow-sm'
+                : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+            )}
+          >
+            <span>{cat.icon === '···' ? '···' : cat.icon}</span>
+            <span>{cat.label}</span>
+          </button>
+        ))}
+      </div>
+
+      {/* Main body */}
+      <div className="flex flex-1 overflow-hidden">
+        {/* Vertical Categories (Desktop >= lg:) */}
+        <div className="hidden lg:flex w-[190px] flex-shrink-0 flex-col overflow-y-auto border-r border-slate-200/80 bg-white">
+          <div className="px-3 pb-2 pt-4">
+            <p className="mb-2.5 px-1 text-[11px] font-bold uppercase tracking-wider text-slate-400">Categories</p>
+            <div className="space-y-1">
+              {categoryList.map((cat) => (
+                <button
+                  key={cat.id}
+                  onClick={() => setActiveCategory(cat.id)}
+                  className={cn(
+                    'flex w-full items-center gap-2.5 rounded-xl border px-3 py-2.5 text-left text-xs font-medium transition-all',
+                    activeCategory === cat.id
+                      ? 'border-blue-200 bg-blue-50 text-blue-700 shadow-sm'
+                      : 'border-transparent text-slate-600 hover:border-slate-100 hover:bg-slate-50'
+                  )}
+                >
+                  <span className="w-5 flex-shrink-0 text-center text-base leading-none">
+                    {cat.icon === '···' ? <MoreHorizontal className="mx-auto h-3.5 w-3.5 text-slate-400" /> : cat.icon}
+                  </span>
+                  <span className="truncate">{cat.label}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="mt-auto border-t border-slate-100 p-3">
+            <Link
+              to="/medicines"
+              className="flex w-full items-center justify-center gap-2 rounded-xl bg-blue-600 px-3 py-2.5 text-xs font-semibold text-white shadow-sm transition-colors hover:bg-blue-700 active:scale-95"
+            >
+              <Plus className="h-3.5 w-3.5" />
+              Add Item
+            </Link>
+          </div>
+        </div>
+
+        {/* Product grid */}
+        <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+          <div className="flex flex-shrink-0 items-center justify-between border-b border-slate-200/60 bg-[#f8f9fb] px-4 sm:px-5 py-2.5 sm:py-3">
+            <p className="text-xs sm:text-sm font-bold text-slate-800">
+              {activeCategoryLabel}{' '}
+              <span className="font-normal text-slate-400">({filteredProducts.length})</span>
+            </p>
+            <div className="flex items-center gap-1 rounded-xl border border-slate-200 bg-white p-1 shadow-sm">
+              <button
+                onClick={() => setViewMode('grid')}
+                className={cn(
+                  'flex items-center gap-1.5 rounded-lg px-2.5 py-1 sm:px-3 sm:py-1.5 text-xs font-semibold transition-all',
+                  viewMode === 'grid' ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-500 hover:text-slate-700'
+                )}
+              >
+                <Grid3X3 className="h-3.5 w-3.5" /> Grid
+              </button>
+              <button
+                onClick={() => setViewMode('list')}
+                className={cn(
+                  'flex items-center gap-1.5 rounded-lg px-2.5 py-1 sm:px-3 sm:py-1.5 text-xs font-semibold transition-all',
+                  viewMode === 'list' ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-500 hover:text-slate-700'
+                )}
+              >
+                <List className="h-3.5 w-3.5" /> List
+              </button>
+            </div>
+          </div>
+
+          <div className="flex-1 overflow-y-auto p-3 sm:p-4">
+            {pageProducts.length === 0 ? (
+              <div className="flex h-full flex-col items-center justify-center text-slate-400 py-12">
+                <Package className="mb-3 h-12 w-12 opacity-30 text-sky-500" />
+                <p className="text-sm font-medium">No active frozen products found</p>
+                <p className="mt-1 text-xs">All cartons or batches may be out of stock or past freezer shelf life</p>
+              </div>
+            ) : viewMode === 'grid' ? (
+              <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-3 xl:grid-cols-4 gap-3">
+                {pageProducts.map((prod: any) => (
+                  <MedicineCard key={prod.id} product={prod} onAdd={() => addToCart(prod)} />
+                ))}
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {pageProducts.map((prod: any) => (
+                  <div
+                    key={prod.id}
+                    className="flex items-center gap-3 sm:gap-4 rounded-xl border border-slate-200/80 bg-white p-3 shadow-sm transition-all hover:border-blue-200"
+                  >
+                    <div
+                      className={cn(
+                        'flex h-10 w-10 sm:h-12 sm:w-12 flex-shrink-0 items-center justify-center rounded-xl bg-gradient-to-br',
+                        getCardGradient(prod.medicine.id)
+                      )}
+                    >
+                      <Package className="h-4 w-4 sm:h-5 sm:w-5 text-sky-600/80" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-xs sm:text-sm font-bold text-slate-800">{prod.medicine.name}</p>
+                      <p className="truncate text-[11px] text-slate-400">
+                        {prod.medicine.genericName || prod.medicine.category?.name} • {prod.batchCount} lot(s)
+                      </p>
+                    </div>
+                    <div className="flex-shrink-0 text-right">
+                      <p className="text-xs sm:text-sm font-bold text-slate-800">{currencySymbol}{prod.medicine.price.toFixed(2)}</p>
+                      <p className="text-[11px] text-slate-400">Stock: {prod.totalStock}</p>
+                    </div>
+                    <button
+                      onClick={() => addToCart(prod)}
+                      disabled={prod.totalStock <= 0}
+                      className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-blue-600 text-white hover:bg-blue-700 active:scale-95 disabled:opacity-30"
+                    >
+                      <Plus className="h-4 w-4" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Pagination */}
+          {totalPages > 1 && (
+            <div className="flex flex-shrink-0 items-center justify-center gap-1.5 border-t border-slate-200/60 bg-[#f8f9fb] px-4 sm:px-5 py-2.5 sm:py-3">
+              <button
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+                disabled={page === 1}
+                className="rounded-lg border border-slate-200 bg-white px-2.5 sm:px-3 py-1.5 text-xs font-medium text-slate-600 transition-all hover:bg-slate-50 disabled:opacity-40"
+              >
+                Prev
+              </button>
+              {paginationPages.map((p, idx) =>
+                p === 'ellipsis' ? (
+                  <span key={`e-${idx}`} className="px-1 text-xs text-slate-400">
+                    ...
+                  </span>
+                ) : (
+                  <button
+                    key={p}
+                    onClick={() => setPage(p)}
+                    className={cn(
+                      'min-w-[28px] sm:min-w-[32px] rounded-lg px-2 py-1.5 text-xs font-semibold transition-all',
+                      page === p
+                        ? 'bg-blue-600 text-white shadow-sm'
+                        : 'border border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+                    )}
+                  >
+                    {p}
+                  </button>
+                )
+              )}
+              <button
+                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                disabled={page === totalPages}
+                className="rounded-lg border border-slate-200 bg-white px-2.5 sm:px-3 py-1.5 text-xs font-medium text-slate-600 transition-all hover:bg-slate-50 disabled:opacity-40"
+              >
+                Next
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* Cart Sidebar (Desktop >= lg:) */}
+        <div className="hidden lg:flex w-[310px] flex-shrink-0 flex-col border-l border-slate-200/80 bg-[#fafbfc] shadow-[-4px_0_24px_rgba(15,23,42,0.04)]">
+          <CartPanelContent
+            cart={cart}
+            clearCart={clearCart}
+            selectedCustomerId={selectedCustomerId}
+            setSelectedCustomerId={setSelectedCustomerId}
+            customers={customers}
+            removeFromCart={removeFromCart}
+            updateQty={updateQty}
+            enableDiscount={enableDiscount}
+            discountPercent={discountPercent}
+            setDiscountPercent={setDiscountPercent}
+            subtotal={subtotal}
+            discountAmt={discountAmt}
+            enableTax={enableTax}
+            taxRate={taxRate}
+            tax={tax}
+            total={total}
+            currencySymbol={currencySymbol}
+            paymentMethod={paymentMethod}
+            setPaymentMethod={setPaymentMethod}
+            handleCheckout={handleCheckout}
+            createSaleMutation={createSaleMutation}
+            setToast={setToast}
+          />
+        </div>
+      </div>
+
+      {/* Footer */}
+      <div className="hidden sm:flex flex-shrink-0 items-center justify-between border-t border-slate-200/80 bg-white px-4 sm:px-5 py-2">
+        <div className="flex flex-wrap items-center gap-3 sm:gap-4">
+          {[
+            { key: 'F1', label: 'Clear Cart' },
+            { key: 'F2', label: 'Hold Sale' },
+            { key: 'Ctrl+K', label: 'Search' },
+            { key: 'F4', label: 'Focus Search' },
+          ].map((sc) => (
+            <div key={sc.key} className="flex items-center gap-1.5">
+              <span className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[10px] font-bold text-slate-500">
+                {sc.key}
+              </span>
+              <span className="text-[11px] text-slate-500">{sc.label}</span>
+            </div>
+          ))}
+        </div>
+        <div className="flex items-center gap-4">
+          <button className="flex items-center gap-1.5 text-[11px] text-slate-400 transition-colors hover:text-slate-600">
+            <Keyboard className="h-3.5 w-3.5" />
+            Keyboard
+          </button>
+          <button
+            onClick={() => document.documentElement.requestFullscreen?.()}
+            className="flex items-center gap-1.5 text-[11px] text-slate-400 transition-colors hover:text-slate-600"
+          >
+            <Maximize2 className="h-3.5 w-3.5" />
+            Full Screen
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+

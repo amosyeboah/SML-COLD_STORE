@@ -1,0 +1,29 @@
+# Dependencies
+node_modules/
+
+# Production builds
+dist/
+out/
+.vercel/
+
+# Local SQLite databases
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+database/*.db
+database/*.db-journal
+
+# Prisma Generated Client
+generated/
+
+# Environment secrets
+.env
+.env.local
+.env.*.local
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*

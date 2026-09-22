@@ -1,0 +1,137 @@
+generator client {
+  provider      = "prisma-client-js"
+  output        = "../generated/client"
+  binaryTargets = ["native", "windows"]
+  engineType    = "library"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:../database/pharmacy.db"
+}
+
+model User {
+  id        String   @id @default(uuid())
+  username  String   @unique
+  password  String
+  role      String   // ADMIN, CASHIER
+  createdAt DateTime @default(now())
+}
+
+model Supplier {
+  id        String     @id @default(uuid())
+  name      String
+  contact   String?
+  email     String?
+  address   String?
+  purchases Purchase[]
+}
+
+model Customer {
+  id            String         @id @default(uuid())
+  name          String
+  phone         String?        @unique
+  sales         Sale[]
+  prescriptions Prescription[]
+}
+
+model Category {
+  id        String     @id @default(uuid())
+  name      String     @unique
+  medicines Medicine[]
+}
+
+model Medicine {
+  id            String     @id @default(uuid())
+  name          String
+  genericName   String?
+  sku           String     @unique // Barcode/SKU
+  categoryId    String
+  category      Category   @relation(fields: [categoryId], references: [id])
+  price         Float      // Selling price
+  cost          Float      // Default purchase cost
+  minStockLevel Int        @default(10)
+  batches       Batch[]
+}
+
+model Batch {
+  id             String         @id @default(uuid())
+  medicineId     String
+  medicine       Medicine       @relation(fields: [medicineId], references: [id])
+  batchNumber    String
+  expiryDate     DateTime
+  quantity       Int            // Current stock in this batch
+  purchaseItemId String?
+  purchaseItem   PurchaseItem?  @relation(fields: [purchaseItemId], references: [id])
+  saleItems      SaleItem[]
+}
+
+model Purchase {
+  id         String         @id @default(uuid())
+  supplierId String
+  supplier   Supplier       @relation(fields: [supplierId], references: [id])
+  date       DateTime       @default(now())
+  total      Float
+  status     String         // PENDING, COMPLETED
+  items      PurchaseItem[]
+}
+
+model PurchaseItem {
+  id         String   @id @default(uuid())
+  purchaseId String
+  purchase   Purchase @relation(fields: [purchaseId], references: [id])
+  medicineId String
+  quantity   Int
+  cost       Float
+  batches    Batch[]
+}
+
+model Sale {
+  id           String         @id @default(uuid())
+  customerId   String?
+  customer     Customer?      @relation(fields: [customerId], references: [id])
+  date         DateTime       @default(now())
+  total        Float
+  paymentMethod String        // CASH, CARD
+  items        SaleItem[]
+  prescription Prescription?
+}
+
+model SaleItem {
+  id         String   @id @default(uuid())
+  saleId     String
+  sale       Sale     @relation(fields: [saleId], references: [id])
+  batchId    String
+  batch      Batch    @relation(fields: [batchId], references: [id])
+  quantity   Int
+  price      Float    // Price at time of sale
+}
+
+model Prescription {
+  id           String    @id @default(uuid())
+  saleId       String    @unique
+  sale         Sale      @relation(fields: [saleId], references: [id])
+  customerId   String
+  customer     Customer  @relation(fields: [customerId], references: [id])
+  doctorName   String
+  notes        String?
+  date         DateTime  @default(now())
+}
+
+model Setting {
+  key   String @id
+  value String
+}
+
+model AuditLog {
+  id        String   @id @default(uuid())
+  action    String   // PRICE_CHANGE, BATCH_RECEIVE, BATCH_DELETE, USER_UPDATE, etc.
+  category  String   // AUTH, PRICING, INVENTORY, PURCHASES, SALES, SYSTEM
+  details   String   // Human-readable summary
+  username  String   // Actor
+  userRole  String   // ADMIN, MANAGER, CASHIER
+  severity  String   @default("INFO") // INFO, WARNING, CRITICAL
+  metadata  String?  // JSON string
+  createdAt DateTime @default(now())
+}
+
