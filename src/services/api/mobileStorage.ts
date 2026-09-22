@@ -169,13 +169,13 @@ export const mobileApi = {
     await seedInitialDataIfNeeded()
     const users = getItem<any[]>(STORAGE_KEYS.USERS, [])
     const user = users.find(u => u.username.toLowerCase() === username.toLowerCase())
-    if (!user) return { success: false, error: 'Invalid username or password' }
+    if (!user) throw new Error('Invalid username or password')
 
     const isMatch = await verifyPassword(password, user.password)
-    if (!isMatch) return { success: false, error: 'Invalid username or password' }
+    if (!isMatch) throw new Error('Invalid username or password')
 
     const { password: _, ...userWithoutPassword } = user
-    return { success: true, user: userWithoutPassword }
+    return userWithoutPassword
   },
 
   // Dashboard Stats

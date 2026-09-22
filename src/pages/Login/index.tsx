@@ -43,9 +43,20 @@ export default function LoginPage() {
     setError(null)
     try {
       const apiClient = typeof window !== 'undefined' && window.api ? window.api : api
-      const user = await apiClient.login(data.username, data.password)
+      const res = await apiClient.login(data.username, data.password)
+      if (res?.success === false) {
+        throw new Error(res.error || 'Invalid username or password')
+      }
+      const user = res?.user ? res.user : res
+      if (!user || !user.role) {
+        throw new Error('Invalid username or password')
+      }
       login(user)
-      navigate('/dashboard')
+      if (user.role === 'CASHIER') {
+        navigate('/pos')
+      } else {
+        navigate('/dashboard')
+      }
     } catch (e: any) {
       console.error(e)
       setError(e.message || 'Invalid username or password')

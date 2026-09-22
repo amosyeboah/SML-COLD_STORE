@@ -22,12 +22,20 @@ export const useAuthStore = create<AuthState>()(
     (set) => ({
       user: null,
       isAuthenticated: false,
-      login: (user) => set({ user, isAuthenticated: true }),
+      login: (rawUser: any) => {
+        const normalizedUser: User = rawUser?.user ? rawUser.user : rawUser
+        set({ user: normalizedUser, isAuthenticated: true })
+      },
       logout: () => set({ user: null, isAuthenticated: false }),
     }),
     {
       name: 'sml-coldstore-auth',
       partialize: (state) => ({ user: state.user, isAuthenticated: state.isAuthenticated }),
+      onRehydrateStorage: () => (state) => {
+        if (state && (state.user as any)?.user) {
+          state.user = (state.user as any).user
+        }
+      },
     }
   )
 )
