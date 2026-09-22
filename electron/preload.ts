@@ -5,6 +5,8 @@ export const api = {
   // Auth
   login: (username: string, password: string) =>
     ipcRenderer.invoke('auth:login', username, password),
+  loginWithPin: (pin: string, selectedRole?: string) =>
+    ipcRenderer.invoke('auth:loginWithPin', pin, selectedRole),
 
   // Dashboard
   getDashboardStats: () => ipcRenderer.invoke('dashboard:stats'),

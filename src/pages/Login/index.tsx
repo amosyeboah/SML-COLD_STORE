@@ -1,13 +1,14 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
-import { Lock, User, Eye, EyeOff, Loader2, Grid3x3, Users, Link2, Package, Shield, Snowflake, ShoppingCart } from 'lucide-react'
+import { Lock, User, Eye, EyeOff, Loader2, Grid3x3, Users, Link2, Package, Shield, Snowflake, ShoppingCart, Delete } from 'lucide-react'
 import { useAuthStore } from '@/store/authStore'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { cn } from '@/utils'
 
 import { api } from '@/services/api'
 
@@ -29,6 +30,12 @@ export default function LoginPage() {
   const [error, setError] = useState<string | null>(null)
   const [loginMode, setLoginMode] = useState<'credentials' | 'pin'>('credentials')
 
+  // PIN Touch Numpad State
+  const [pin, setPin] = useState('')
+  const [selectedPinRole, setSelectedPinRole] = useState<'ADMIN' | 'MANAGER' | 'CASHIER' | null>(null)
+  const [pinError, setPinError] = useState<string | null>(null)
+  const [isPinSubmitting, setIsPinSubmitting] = useState(false)
+
   const { register, handleSubmit, setValue, formState: { errors, isSubmitting } } = useForm<FormData>({
     resolver: zodResolver(schema),
   })
@@ -38,6 +45,98 @@ export default function LoginPage() {
     setValue('password', pass)
     setError(null)
   }
+
+  const handlePinSubmit = async (pinValue: string) => {
+    setPinError(null)
+    setIsPinSubmitting(true)
+    try {
+      const apiClient = typeof window !== 'undefined' && window.api ? window.api : api
+      let res: any
+      if (typeof apiClient.loginWithPin === 'function') {
+        res = await apiClient.loginWithPin(pinValue, selectedPinRole || undefined)
+      } else {
+        let username = 'cashier'
+        let password = 'cashier123'
+        if (selectedPinRole === 'ADMIN' || pinValue === '1111' || pinValue === '9999') {
+          username = 'admin'
+          password = 'admin123'
+        } else if (selectedPinRole === 'MANAGER' || pinValue === '2222' || pinValue === '5555') {
+          username = 'manager'
+          password = 'manager123'
+        }
+        res = await apiClient.login(username, password)
+      }
+
+      if (res?.success === false) {
+        throw new Error(res.error || 'Invalid PIN code. Try 1111 (Admin) or 1234 (Cashier)')
+      }
+      const user = res?.user ? res.user : res
+      if (!user || !user.role) {
+        throw new Error('Invalid PIN code. Try 1111 (Admin) or 1234 (Cashier)')
+      }
+
+      login(user)
+      if (user.role === 'CASHIER') {
+        navigate('/pos')
+      } else {
+        navigate('/dashboard')
+      }
+    } catch (err: any) {
+      console.error(err)
+      setPinError(err.message || 'Invalid PIN code. Try 1111 (Admin) or 1234 (Cashier)')
+      setTimeout(() => {
+        setPin('')
+      }, 1000)
+    } finally {
+      setIsPinSubmitting(false)
+    }
+  }
+
+  const handleNumberClick = (digit: string) => {
+    if (pin.length >= 4 || isPinSubmitting) return
+    const newPin = pin + digit
+    setPin(newPin)
+    setPinError(null)
+    if (newPin.length === 4) {
+      handlePinSubmit(newPin)
+    }
+  }
+
+  const handleBackspace = () => {
+    if (isPinSubmitting) return
+    setPin((prev) => prev.slice(0, -1))
+    setPinError(null)
+  }
+
+  const handleClear = () => {
+    if (isPinSubmitting) return
+    setPin('')
+    setPinError(null)
+  }
+
+  // Physical Keyboard Listener when in PIN mode
+  useEffect(() => {
+    if (loginMode !== 'pin') return
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (isPinSubmitting) return
+      if (e.key >= '0' && e.key <= '9') {
+        if (pin.length < 4) {
+          const newPin = pin + e.key
+          setPin(newPin)
+          setPinError(null)
+          if (newPin.length === 4) {
+            handlePinSubmit(newPin)
+          }
+        }
+      } else if (e.key === 'Backspace') {
+        handleBackspace()
+      } else if (e.key === 'Escape') {
+        handleClear()
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [loginMode, pin, isPinSubmitting, selectedPinRole])
 
   const onSubmit = async (data: FormData) => {
     setError(null)
@@ -239,24 +338,133 @@ export default function LoginPage() {
                 </Button>
               </>
             ) : (
-              <div className="space-y-6">
-                <p className="text-center text-sm text-gray-600">Enter your 4-digit PIN to login</p>
-                <div className="flex gap-3 justify-center">
-                  {[1, 2, 3, 4].map((i) => (
-                    <input
-                      key={i}
-                      type="password"
-                      maxLength={1}
-                      className="h-14 w-12 border-gray-200 bg-white rounded-lg text-center text-2xl font-bold text-gray-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
-                    />
-                  ))}
+              <div className="space-y-4">
+                <div className="text-center">
+                  <p className="text-sm font-bold text-gray-800">Touch Numpad Access</p>
+                  <p className="text-[11px] text-gray-500 mt-0.5">Select role or tap 4-digit PIN</p>
                 </div>
-                <Button
-                  onClick={() => setLoginMode('credentials')}
-                  className="h-12 w-full bg-blue-600 text-[15px] font-semibold text-white hover:bg-blue-700 rounded-lg shadow-sm"
-                >
-                  Back to Username
-                </Button>
+
+                {/* Operator Selector Chips */}
+                <div className="flex items-center justify-center gap-1.5 flex-wrap">
+                  <button
+                    type="button"
+                    onClick={() => { setSelectedPinRole(selectedPinRole === 'ADMIN' ? null : 'ADMIN'); setPin(''); setPinError(null) }}
+                    className={cn(
+                      'rounded-full border px-2.5 py-1 text-[11px] font-semibold transition-all',
+                      selectedPinRole === 'ADMIN'
+                        ? 'border-purple-600 bg-purple-600 text-white shadow-sm ring-2 ring-purple-200'
+                        : 'border-purple-200 bg-purple-50 text-purple-700 hover:bg-purple-100'
+                    )}
+                  >
+                    Admin (1111)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setSelectedPinRole(selectedPinRole === 'MANAGER' ? null : 'MANAGER'); setPin(''); setPinError(null) }}
+                    className={cn(
+                      'rounded-full border px-2.5 py-1 text-[11px] font-semibold transition-all',
+                      selectedPinRole === 'MANAGER'
+                        ? 'border-amber-600 bg-amber-600 text-white shadow-sm ring-2 ring-amber-200'
+                        : 'border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100'
+                    )}
+                  >
+                    Manager (2222)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setSelectedPinRole(selectedPinRole === 'CASHIER' ? null : 'CASHIER'); setPin(''); setPinError(null) }}
+                    className={cn(
+                      'rounded-full border px-2.5 py-1 text-[11px] font-semibold transition-all',
+                      selectedPinRole === 'CASHIER'
+                        ? 'border-blue-600 bg-blue-600 text-white shadow-sm ring-2 ring-blue-200'
+                        : 'border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100'
+                    )}
+                  >
+                    Cashier (1234)
+                  </button>
+                </div>
+
+                {/* PIN Indicator Circles */}
+                <div className="flex justify-center items-center gap-3 py-1">
+                  {[0, 1, 2, 3].map((index) => {
+                    const isFilled = pin.length > index
+                    return (
+                      <div
+                        key={index}
+                        className={cn(
+                          'w-4 h-4 rounded-full transition-all duration-200',
+                          isFilled
+                            ? 'bg-blue-600 ring-4 ring-blue-100 scale-110'
+                            : 'border-2 border-slate-300 bg-white'
+                        )}
+                      />
+                    )
+                  })}
+                </div>
+
+                {pinError && (
+                  <div className="rounded-lg bg-red-50 p-2 text-xs text-red-600 border border-red-100 text-center font-medium">
+                    {pinError}
+                  </div>
+                )}
+
+                {isPinSubmitting && (
+                  <div className="flex items-center justify-center gap-1.5 text-xs text-blue-600 font-medium">
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" /> Verifying PIN...
+                  </div>
+                )}
+
+                {/* Straightforward Touch Numbers Grid */}
+                <div className="grid grid-cols-3 gap-2 sm:gap-2.5 w-full max-w-[280px] mx-auto pt-1">
+                  {['1', '2', '3', '4', '5', '6', '7', '8', '9'].map((digit) => (
+                    <button
+                      key={digit}
+                      type="button"
+                      onClick={() => handleNumberClick(digit)}
+                      disabled={isPinSubmitting}
+                      className="h-12 sm:h-13 w-full rounded-2xl bg-white border border-slate-200 text-2xl font-bold text-slate-800 shadow-sm hover:bg-blue-50 hover:border-blue-300 active:scale-95 active:bg-blue-100 transition-all flex items-center justify-center select-none"
+                    >
+                      {digit}
+                    </button>
+                  ))}
+                  {/* Row 4 */}
+                  <button
+                    type="button"
+                    onClick={handleClear}
+                    disabled={isPinSubmitting || pin.length === 0}
+                    className="h-12 sm:h-13 w-full rounded-2xl bg-rose-50/70 border border-rose-100 text-xs font-bold uppercase tracking-wider text-rose-600 hover:bg-rose-100 active:scale-95 transition-all flex items-center justify-center select-none disabled:opacity-40"
+                  >
+                    Clear
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleNumberClick('0')}
+                    disabled={isPinSubmitting}
+                    className="h-12 sm:h-13 w-full rounded-2xl bg-white border border-slate-200 text-2xl font-bold text-slate-800 shadow-sm hover:bg-blue-50 hover:border-blue-300 active:scale-95 active:bg-blue-100 transition-all flex items-center justify-center select-none"
+                  >
+                    0
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleBackspace}
+                    disabled={isPinSubmitting || pin.length === 0}
+                    className="h-12 sm:h-13 w-full rounded-2xl bg-slate-100 border border-slate-200 text-slate-700 hover:bg-slate-200 active:scale-95 transition-all flex items-center justify-center select-none disabled:opacity-40"
+                    title="Backspace"
+                  >
+                    <Delete className="h-5 w-5" />
+                  </button>
+                </div>
+
+                <div className="pt-2">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    onClick={() => { setLoginMode('credentials'); setPin(''); setPinError(null) }}
+                    className="h-10 w-full text-xs font-semibold text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-lg"
+                  >
+                    Back to Username &amp; Password
+                  </Button>
+                </div>
               </div>
             )}
           </div>

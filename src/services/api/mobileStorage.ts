@@ -177,6 +177,30 @@ export const mobileApi = {
     const { password: _, ...userWithoutPassword } = user
     return userWithoutPassword
   },
+  loginWithPin: async (pin: string, selectedRole?: string) => {
+    await seedInitialDataIfNeeded()
+    const users = getItem<any[]>(STORAGE_KEYS.USERS, [])
+    let targetUsername = ''
+    if (selectedRole === 'ADMIN' || pin === '1111' || pin === '9999') {
+      targetUsername = 'admin'
+    } else if (selectedRole === 'MANAGER' || pin === '2222' || pin === '5555') {
+      targetUsername = 'manager'
+    } else if (selectedRole === 'CASHIER' || pin === '1234' || pin === '0000') {
+      targetUsername = 'cashier'
+    }
+
+    let user = targetUsername ? users.find(u => u.username.toLowerCase() === targetUsername.toLowerCase()) : null
+    if (!user) {
+      user = users.find(u => u.password === pin)
+    }
+
+    if (!user) {
+      throw new Error('Invalid PIN code. Try 1111 (Admin) or 1234 (Cashier)')
+    }
+
+    const { password: _, ...userWithoutPassword } = user
+    return userWithoutPassword
+  },
 
   // Dashboard Stats
   getDashboardStats: async () => {

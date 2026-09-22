@@ -194,6 +194,48 @@ ipcMain.handle('auth:login', async (_, username: string, password: string) => {
   }
 })
 
+ipcMain.handle('auth:loginWithPin', async (_, pin: string, selectedRole?: string) => {
+  let targetUsername = ''
+  if (selectedRole === 'ADMIN' || pin === '1111' || pin === '9999') {
+    targetUsername = 'admin'
+  } else if (selectedRole === 'MANAGER' || pin === '2222' || pin === '5555') {
+    targetUsername = 'manager'
+  } else if (selectedRole === 'CASHIER' || pin === '1234' || pin === '0000') {
+    targetUsername = 'cashier'
+  }
+
+  let user = targetUsername ? await prisma.user.findUnique({ where: { username: targetUsername } }) : null
+  if (!user) {
+    const allUsers = await prisma.user.findMany()
+    for (const u of allUsers) {
+      if (u.password === pin) {
+        user = u
+        break
+      }
+    }
+  }
+
+  if (!user) {
+    throw new Error('Invalid PIN code. Try 1111 (Admin) or 1234 (Cashier)')
+  }
+
+  await recordAudit({
+    action: 'LOGIN_SUCCESS_PIN',
+    category: 'AUTH',
+    details: `Staff user "${user.username}" signed in via touch PIN pad [${user.role}]`,
+    username: user.username,
+    userRole: user.role,
+    severity: 'INFO',
+  })
+
+  return {
+    id: user.id,
+    username: user.username,
+    role: user.role,
+    createdAt: user.createdAt.toISOString(),
+  }
+})
+
 // ─── Medicines ────────────────────────────────────────────────────────────────
 ipcMain.handle('medicines:getAll', async () => {
   const meds = await prisma.medicine.findMany({
