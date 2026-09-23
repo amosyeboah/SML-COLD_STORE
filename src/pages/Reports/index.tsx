@@ -166,58 +166,59 @@ function getPaymentMethodColor(method: string) {
   }
 }
 
-function buildKpiCards(data: ReportsData) {
-  const { kpis } = data
+function buildKpiCards(data?: ReportsData | null) {
+  const kpis = data?.kpis
+  if (!kpis) return []
   return [
     {
       title: 'Total Sales',
-      value: formatCurrency(kpis.totalSales),
-      trend: formatTrend(kpis.salesTrend),
+      value: formatCurrency(kpis.totalSales ?? 0),
+      trend: formatTrend(kpis.salesTrend ?? 0),
       icon: ShoppingCart,
       iconBg: 'bg-blue-100',
       iconColor: 'text-blue-600',
       sparkColor: '#3b82f6',
-      sparkData: kpis.salesSparkline,
+      sparkData: kpis.salesSparkline ?? [],
     },
     {
       title: 'Total Purchases',
-      value: formatCurrency(kpis.totalPurchases),
-      trend: formatTrend(kpis.purchasesTrend),
+      value: formatCurrency(kpis.totalPurchases ?? 0),
+      trend: formatTrend(kpis.purchasesTrend ?? 0),
       icon: ShoppingBag,
       iconBg: 'bg-emerald-100',
       iconColor: 'text-emerald-600',
       sparkColor: '#22c55e',
-      sparkData: kpis.purchasesSparkline,
+      sparkData: kpis.purchasesSparkline ?? [],
     },
     {
       title: 'Gross Profit',
-      value: formatCurrency(kpis.grossProfit),
-      trend: formatTrend(kpis.profitTrend),
+      value: formatCurrency(kpis.grossProfit ?? 0),
+      trend: formatTrend(kpis.profitTrend ?? 0),
       icon: DollarSign,
       iconBg: 'bg-amber-100',
       iconColor: 'text-amber-600',
       sparkColor: '#f59e0b',
-      sparkData: kpis.profitSparkline,
+      sparkData: kpis.profitSparkline ?? [],
     },
     {
       title: 'Transactions',
-      value: String(kpis.transactions),
-      trend: formatTrend(kpis.transactionsTrend),
+      value: String(kpis.transactions ?? 0),
+      trend: formatTrend(kpis.transactionsTrend ?? 0),
       icon: Zap,
       iconBg: 'bg-purple-100',
       iconColor: 'text-purple-600',
       sparkColor: '#a855f7',
-      sparkData: kpis.transactionsSparkline,
+      sparkData: kpis.transactionsSparkline ?? [],
     },
     {
       title: 'Avg. Daily Sales',
-      value: formatCurrency(kpis.avgDailySales),
-      trend: formatTrend(kpis.avgDailyTrend),
+      value: formatCurrency(kpis.avgDailySales ?? 0),
+      trend: formatTrend(kpis.avgDailyTrend ?? 0),
       icon: Activity,
       iconBg: 'bg-cyan-100',
       iconColor: 'text-cyan-600',
       sparkColor: '#06b6d4',
-      sparkData: kpis.avgDailySparkline,
+      sparkData: kpis.avgDailySparkline ?? [],
     },
   ]
 }
@@ -267,16 +268,16 @@ export default function Reports() {
   const exportMutation = useMutation({
     mutationFn: () => reportsService.exportExcel(startDate, endDate),
     onSuccess: (result) => {
-      if (!result.success) return
-      alert(`Report exported to ${result.path}`)
+      if (!result?.success) return
+      alert(`Report exported to ${result.path || 'Downloads'}`)
     },
     onError: () => alert('Failed to export report.'),
   })
 
-  const kpiCards = useMemo(() => (data ? buildKpiCards(data) : []), [data])
+  const kpiCards = useMemo(() => buildKpiCards(data), [data])
   const chartConfig = getChartConfig(activeReport)
   const dateRangeLabel = formatDateRangeLabel(startDate, endDate)
-  const totalPayment = data?.paymentBreakdown.reduce((sum, item) => sum + item.value, 0) ?? 0
+  const totalPayment = (data?.paymentBreakdown ?? []).reduce((sum, item) => sum + item.value, 0)
 
   const applyShortcut = (shortcut: string) => {
     if (shortcut === 'Custom Range') {
@@ -420,13 +421,13 @@ export default function Reports() {
                         </span>
                       </div>
                       <div className="h-[260px]">
-                        {data.salesOverview.length === 0 ? (
+                        {(data.salesOverview ?? []).length === 0 ? (
                           <div className="flex h-full items-center justify-center text-sm text-slate-400">
                             No data for the selected period.
                           </div>
                         ) : (
                           <ResponsiveContainer width="100%" height="100%">
-                            <AreaChart data={data.salesOverview} margin={{ top: 10, right: 10, left: -10, bottom: 0 }}>
+                            <AreaChart data={data.salesOverview || []} margin={{ top: 10, right: 10, left: -10, bottom: 0 }}>
                               <defs>
                                 <linearGradient id={chartConfig.gradientId} x1="0" y1="0" x2="0" y2="1">
                                   <stop offset="5%" stopColor={chartConfig.color} stopOpacity={0.25} />
@@ -457,7 +458,7 @@ export default function Reports() {
                       </div>
                       {activeReport === 'tax' && (
                         <p className="mt-3 text-sm text-slate-500">
-                          Estimated tax (15%): <span className="font-semibold text-slate-800">{formatCurrency(data.kpis.grossProfit * 0.15)}</span>
+                          Estimated tax (15%): <span className="font-semibold text-slate-800">{formatCurrency((data.kpis?.grossProfit ?? 0) * 0.15)}</span>
                         </p>
                       )}
                     </div>
@@ -471,7 +472,7 @@ export default function Reports() {
                           Selected Period
                         </span>
                       </div>
-                      {data.paymentBreakdown.length === 0 ? (
+                      {(data.paymentBreakdown ?? []).length === 0 ? (
                         <div className="flex h-40 items-center justify-center text-sm text-slate-400">
                           No payment data for this period.
                         </div>
@@ -480,7 +481,7 @@ export default function Reports() {
                           <div className="relative flex-shrink-0" style={{ width: 130, height: 130 }}>
                             <PieChart width={130} height={130}>
                               <Pie
-                                data={data.paymentBreakdown}
+                                data={data.paymentBreakdown || []}
                                 cx={60}
                                 cy={60}
                                 innerRadius={38}
@@ -489,7 +490,7 @@ export default function Reports() {
                                 strokeWidth={2}
                                 stroke="#fff"
                               >
-                                {data.paymentBreakdown.map((entry) => (
+                                {(data.paymentBreakdown || []).map((entry) => (
                                   <Cell key={entry.name} fill={entry.color} />
                                 ))}
                               </Pie>
@@ -500,14 +501,14 @@ export default function Reports() {
                             </div>
                           </div>
                           <div className="min-w-0 flex-1 space-y-2">
-                            {data.paymentBreakdown.map((item) => (
+                            {(data.paymentBreakdown || []).map((item) => (
                               <div key={item.name} className="flex items-center justify-between gap-2 text-xs">
                                 <div className="flex min-w-0 items-center gap-1.5">
                                   <span className="h-2 w-2 flex-shrink-0 rounded-full" style={{ background: item.color }} />
                                   <span className="truncate text-slate-600">{item.name}</span>
                                 </div>
                                 <span className="flex-shrink-0 font-semibold text-slate-800">
-                                  {formatCurrency(item.value)} {item.percent.toFixed(1)}%
+                                  {formatCurrency(item.value)} {(item.percent ?? 0).toFixed(1)}%
                                 </span>
                               </div>
                             ))}
@@ -519,7 +520,7 @@ export default function Reports() {
                 </div>
               )}
 
-              {shouldShowSection(activeReport, 'purchases') && data.purchases.length > 0 && (
+              {shouldShowSection(activeReport, 'purchases') && (data.purchases ?? []).length > 0 && (
                 <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
                   <h3 className="mb-4 text-base font-bold text-slate-900">Purchase Orders</h3>
                   <div className="overflow-x-auto">
@@ -533,7 +534,7 @@ export default function Reports() {
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {data.purchases.map((purchase) => (
+                        {(data.purchases || []).map((purchase) => (
                           <TableRow key={purchase.id}>
                             <TableCell>{format(new Date(purchase.date), 'dd MMM yyyy HH:mm')}</TableCell>
                             <TableCell className="font-medium">{purchase.supplier}</TableCell>
@@ -559,11 +560,11 @@ export default function Reports() {
                           View all <ChevronRight className="h-3.5 w-3.5" />
                         </button>
                       </div>
-                      {data.topMedicines.length === 0 ? (
+                      {(data.topMedicines ?? []).length === 0 ? (
                         <p className="py-8 text-center text-sm text-slate-400">No sales in this period.</p>
                       ) : (
                         <div className="space-y-3">
-                          {data.topMedicines.map((med, idx) => (
+                          {(data.topMedicines || []).map((med, idx) => (
                             <div key={med.name} className="flex items-center gap-3">
                               <span className="w-4 flex-shrink-0 text-center text-xs font-bold text-slate-400">{idx + 1}</span>
                               <div
@@ -594,7 +595,7 @@ export default function Reports() {
                           View all <ChevronRight className="h-3.5 w-3.5" />
                         </button>
                       </div>
-                      {data.recentTransactions.length === 0 ? (
+                      {(data.recentTransactions ?? []).length === 0 ? (
                         <p className="py-8 text-center text-sm text-slate-400">No transactions in this period.</p>
                       ) : (
                         <div className="overflow-x-auto">
@@ -609,7 +610,7 @@ export default function Reports() {
                               </TableRow>
                             </TableHeader>
                             <TableBody>
-                              {data.recentTransactions.map((txn) => (
+                              {(data.recentTransactions || []).map((txn) => (
                                 <TableRow key={txn.id} className="border-b border-slate-50 hover:bg-slate-50/50">
                                   <TableCell className="px-2 py-2 text-xs font-semibold text-slate-800">{txn.id}</TableCell>
                                   <TableCell className="max-w-[90px] truncate px-2 py-2 text-xs text-slate-600">
@@ -644,11 +645,11 @@ export default function Reports() {
                         <h3 className="text-base font-bold text-slate-900">Stock Expiry Alert</h3>
                         <button className="text-xs font-semibold text-indigo-600 hover:text-indigo-700">View all</button>
                       </div>
-                      {data.expiringBatches.length === 0 ? (
+                      {(data.expiringBatches ?? []).length === 0 ? (
                         <p className="py-8 text-center text-sm text-slate-400">No batches expiring soon.</p>
                       ) : (
                         <div className="space-y-2.5">
-                          {data.expiringBatches.map((med) => (
+                          {(data.expiringBatches || []).map((med) => (
                             <div
                               key={med.batch}
                               className="flex items-start gap-2.5 rounded-lg border border-red-100 bg-red-50/60 p-3"
