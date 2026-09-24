@@ -14,6 +14,7 @@ model User {
   id        String   @id @default(uuid())
   username  String   @unique
   password  String
+  pin       String?
   role      String   // ADMIN, CASHIER
   createdAt DateTime @default(now())
 }
@@ -92,9 +93,18 @@ model Sale {
   customer     Customer?      @relation(fields: [customerId], references: [id])
   date         DateTime       @default(now())
   total        Float
-  paymentMethod String        // CASH, CARD
+  paymentMethod String        // CASH, MOBILE, CARD, SPLIT
+  payments     SalePayment[]
   items        SaleItem[]
   prescription Prescription?
+}
+
+model SalePayment {
+  id        String   @id @default(uuid())
+  saleId    String
+  sale      Sale     @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  method    String   // CASH, MOBILE, CARD, BANK TRANSFER
+  amount    Float
 }
 
 model SaleItem {

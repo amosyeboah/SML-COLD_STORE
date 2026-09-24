@@ -1,12 +1,14 @@
 import { useState, useEffect, useRef } from 'react'
 import { useLocation, useNavigate, Link } from 'react-router-dom'
-import { Bell, Search, Plus, Maximize2, AlertTriangle, Clock, Package, User } from 'lucide-react'
+import { Bell, Search, Plus, Maximize2, AlertTriangle, Clock, Package, User, RefreshCw } from 'lucide-react'
 import { useAuthStore } from '@/store/authStore'
 import { Command } from 'cmdk'
 import { Dialog, DialogContent } from '@/components/ui/dialog'
 import { useQuery } from '@tanstack/react-query'
 import { cn } from '@/utils'
-import { subscribeToSyncState } from '@/services/sync/syncQueue'
+import { subscribeToSyncState, reconcileAllSalesWithCloud } from '@/services/sync/syncQueue'
+import { fetchCloudSalesIfAvailable } from '@/services/api/mobileStorage'
+import { queryClient } from '@/lib/queryClient'
 
 const greetingText = () => {
   const hour = new Date().getHours()
@@ -69,6 +71,33 @@ export default function TopBar() {
     pendingCount: 0,
     lastSyncTime: null,
   })
+
+  const [manualSyncing, setManualSyncing] = useState(false)
+  const [syncSuccessMsg, setSyncSuccessMsg] = useState<string | null>(null)
+
+  const handleManualSync = async () => {
+    if (manualSyncing || syncState.isSyncing) return
+    setManualSyncing(true)
+    setSyncSuccessMsg(null)
+    try {
+      const res = await reconcileAllSalesWithCloud()
+      await fetchCloudSalesIfAvailable().catch(() => {})
+      queryClient.invalidateQueries({ queryKey: ['dashboard-stats'] })
+      queryClient.invalidateQueries({ queryKey: ['reports'] })
+      queryClient.invalidateQueries({ queryKey: ['batches'] })
+      queryClient.invalidateQueries({ queryKey: ['medicines'] })
+      queryClient.invalidateQueries({ queryKey: ['customers'] })
+      queryClient.invalidateQueries({ queryKey: ['sales'] })
+      setSyncSuccessMsg(res.pushedCount > 0 ? `Synced (${res.pushedCount})!` : 'Synced!')
+      setTimeout(() => setSyncSuccessMsg(null), 3000)
+    } catch (err: any) {
+      console.warn('Manual sync failed:', err)
+      setSyncSuccessMsg('Error')
+      setTimeout(() => setSyncSuccessMsg(null), 3000)
+    } finally {
+      setManualSyncing(false)
+    }
+  }
 
   useEffect(() => {
     const unsub = subscribeToSyncState((s) => setSyncState(s))
@@ -148,7 +177,7 @@ export default function TopBar() {
           <span
             className={cn(
               "h-2 w-2 rounded-full",
-              syncState.isSyncing
+              syncState.isSyncing || manualSyncing
                 ? "bg-blue-500 animate-spin"
                 : syncState.pendingCount > 0
                 ? "bg-amber-500"
@@ -156,13 +185,31 @@ export default function TopBar() {
             )}
           />
           <span className="hidden sm:inline text-slate-700">
-            {syncState.isSyncing
+            {syncState.isSyncing || manualSyncing
               ? "Syncing..."
               : syncState.pendingCount > 0
               ? `${syncState.pendingCount} Pending`
               : "Cloud Synced"}
           </span>
         </Link>
+
+        {/* Manual Sync Fallback Button */}
+        <button
+          onClick={handleManualSync}
+          disabled={manualSyncing || syncState.isSyncing}
+          title="Manual Sync: Force sync all offline and cloud transactions now"
+          className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border border-indigo-200 bg-indigo-50/80 hover:bg-indigo-100 text-indigo-700 transition-all text-xs font-semibold shadow-xs disabled:opacity-60 cursor-pointer active:scale-95"
+        >
+          <RefreshCw
+            className={cn(
+              "w-3.5 h-3.5 transition-transform duration-500",
+              (manualSyncing || syncState.isSyncing) && "animate-spin text-indigo-600"
+            )}
+          />
+          <span className="hidden md:inline">
+            {manualSyncing ? "Syncing..." : syncSuccessMsg || "Sync Now"}
+          </span>
+        </button>
 
         {/* Fullscreen toggle */}
         <button onClick={toggleFullScreen} className="w-9 h-9 rounded-xl border border-slate-200 bg-white flex items-center justify-center text-slate-500 hover:border-slate-300 hover:bg-slate-50 transition-all">

@@ -195,23 +195,21 @@ ipcMain.handle('auth:login', async (_, username: string, password: string) => {
 })
 
 ipcMain.handle('auth:loginWithPin', async (_, pin: string, selectedRole?: string) => {
-  let targetUsername = ''
-  if (selectedRole === 'ADMIN' || pin === '1111' || pin === '9999') {
-    targetUsername = 'admin'
-  } else if (selectedRole === 'MANAGER' || pin === '2222' || pin === '5555') {
-    targetUsername = 'manager'
-  } else if (selectedRole === 'CASHIER' || pin === '1234' || pin === '0000') {
-    targetUsername = 'cashier'
-  }
+  const allUsers = await prisma.user.findMany()
+  let user = allUsers.find(u => u.pin === pin)
 
-  let user = targetUsername ? await prisma.user.findUnique({ where: { username: targetUsername } }) : null
+  // Fallback to hardcoded PINs if user didn't set a custom PIN yet
   if (!user) {
-    const allUsers = await prisma.user.findMany()
-    for (const u of allUsers) {
-      if (u.password === pin) {
-        user = u
-        break
-      }
+    let targetUsername = ''
+    if ((selectedRole === 'ADMIN' && pin === '1111') || pin === '1111' || pin === '9999') {
+      targetUsername = 'admin'
+    } else if ((selectedRole === 'MANAGER' && pin === '2222') || pin === '2222' || pin === '5555') {
+      targetUsername = 'manager'
+    } else if ((selectedRole === 'CASHIER' && pin === '1234') || pin === '1234' || pin === '0000') {
+      targetUsername = 'cashier'
+    }
+    if (targetUsername) {
+      user = allUsers.find(u => u.username.toLowerCase() === targetUsername.toLowerCase())
     }
   }
 
@@ -321,11 +319,14 @@ ipcMain.handle('medicines:delete', async (_, id: string) => {
 })
 
 // ─── Users ────────────────────────────────────────────────────────────────────
-ipcMain.handle('users:update', async (_, id: string, data: { username: string; role: string; passwordHash?: string }) => {
+ipcMain.handle('users:update', async (_, id: string, data: { username: string; role: string; passwordHash?: string; pin?: string }) => {
   const existing = await prisma.user.findUnique({ where: { id } })
   const updateData: any = { username: data.username, role: data.role }
   if (data.passwordHash) {
     updateData.password = await bcrypt.hash(data.passwordHash, 10)
+  }
+  if (data.pin !== undefined) {
+    updateData.pin = data.pin
   }
   const updated = await prisma.user.update({
     where: { id },
@@ -473,7 +474,14 @@ ipcMain.handle('customers:delete', async (_, id: string) => {
 })
 
 // ─── Sales (POS) ──────────────────────────────────────────────────────────────
-ipcMain.handle('sales:create', async (_, data: { customerId?: string; paymentMethod: string; total: number; items: { batchId: string; quantity: number; price: number }[]; prescription?: { doctorName: string; notes?: string } }) => {
+ipcMain.handle('sales:create', async (_, data: {
+  customerId?: string
+  paymentMethod: string
+  total: number
+  items: { batchId: string; quantity: number; price: number }[]
+  payments?: { method: string; amount: number }[]
+  prescription?: { doctorName: string; notes?: string }
+}) => {
   return await prisma.$transaction(async (tx) => {
     const today = new Date()
     today.setHours(0, 0, 0, 0)
@@ -495,11 +503,19 @@ ipcMain.handle('sales:create', async (_, data: { customerId?: string; paymentMet
       }
     }
 
+    const paymentRecords = data.payments && data.payments.length > 0
+      ? data.payments.map((p) => ({ method: p.method, amount: p.amount }))
+      : [{ method: data.paymentMethod || 'CASH', amount: data.total }]
+
+    const primaryPaymentMethod = data.payments && data.payments.length > 1
+      ? 'SPLIT'
+      : (data.payments?.[0]?.method || data.paymentMethod || 'CASH')
+
     // 2. Create Sale
     const sale = await tx.sale.create({
       data: {
         customerId: data.customerId,
-        paymentMethod: data.paymentMethod,
+        paymentMethod: primaryPaymentMethod,
         total: data.total,
         items: {
           create: data.items.map((i) => ({
@@ -508,8 +524,11 @@ ipcMain.handle('sales:create', async (_, data: { customerId?: string; paymentMet
             price: i.price,
           })),
         },
+        payments: {
+          create: paymentRecords,
+        },
       },
-      include: { items: true },
+      include: { items: true, payments: true },
     })
 
     // 3. Reduce batch quantities
@@ -533,15 +552,20 @@ ipcMain.handle('sales:create', async (_, data: { customerId?: string; paymentMet
     }
 
     if (data.total >= 500) {
+      const paymentSummary = data.payments && data.payments.length > 1
+        ? `SPLIT (${data.payments.map((p) => `${p.method}: GH₵${p.amount.toFixed(2)}`).join(', ')})`
+        : primaryPaymentMethod
+
       await recordAudit({
         action: 'HIGH_VALUE_SALE',
         category: 'SALES',
-        details: `High-value POS transaction completed: GH₵${data.total.toFixed(2)} (${data.items.length} items, paid via ${data.paymentMethod})`,
+        details: `High-value POS transaction completed: GH₵${data.total.toFixed(2)} (${data.items.length} items, paid via ${paymentSummary})`,
         severity: 'INFO',
         metadata: {
           saleId: sale.id,
           total: data.total,
-          paymentMethod: data.paymentMethod,
+          paymentMethod: primaryPaymentMethod,
+          payments: paymentRecords,
           itemCount: data.items.length,
           customerId: data.customerId,
         },
@@ -549,6 +573,24 @@ ipcMain.handle('sales:create', async (_, data: { customerId?: string; paymentMet
     }
 
     return sale
+  })
+})
+
+ipcMain.handle('sales:getAll', async () => {
+  return await prisma.sale.findMany({
+    include: {
+      items: {
+        include: {
+          batch: {
+            include: { medicine: true },
+          },
+        },
+      },
+      customer: true,
+      payments: true,
+      prescription: true,
+    },
+    orderBy: { date: 'desc' },
   })
 })
 
@@ -581,7 +623,7 @@ ipcMain.handle('dashboard:stats', async () => {
   ] = await Promise.all([
     prisma.sale.findMany({ where: { date: { gte: today, lte: endOfDay } } }),
     prisma.sale.findMany({ where: { date: { gte: yesterday, lte: endOfYesterday } } }),
-    prisma.sale.findMany({ where: { date: { gte: startOfMonth, lte: endOfDay } }, include: { items: { include: { batch: { include: { medicine: true } } } }, customer: true } }),
+    prisma.sale.findMany({ where: { date: { gte: startOfMonth, lte: endOfDay } }, include: { items: { include: { batch: { include: { medicine: true } } } }, customer: true, payments: true } }),
     prisma.sale.findMany({ where: { date: { gte: lastMonthStart, lte: lastMonthEnd } } }),
     prisma.purchase.findMany({ where: { date: { gte: startOfMonth, lte: endOfDay } } }),
     prisma.purchase.findMany({ where: { date: { gte: lastMonthStart, lte: lastMonthEnd } } }),
@@ -636,12 +678,19 @@ ipcMain.handle('dashboard:stats', async () => {
   salesByDay.forEach((sales, day) => salesOverviewData.push({ day, sales }))
 
   // Payment Breakdown
-  const PAYMENT_COLORS: Record<string, string> = { CASH: '#22c55e', MOBILE: '#6366f1', CARD: '#a855f7', 'BANK TRANSFER': '#f59e0b' }
-  const PAYMENT_LABELS: Record<string, string> = { CASH: 'Cash', MOBILE: 'Mobile Money', CARD: 'Card', 'BANK TRANSFER': 'Bank Transfer' }
+  const PAYMENT_COLORS: Record<string, string> = { CASH: '#22c55e', MOBILE: '#6366f1', CARD: '#a855f7', 'BANK TRANSFER': '#f59e0b', SPLIT: '#ec4899' }
+  const PAYMENT_LABELS: Record<string, string> = { CASH: 'Cash', MOBILE: 'Mobile Money', CARD: 'Card', 'BANK TRANSFER': 'Bank Transfer', SPLIT: 'Split Payment' }
   const paymentTotals = new Map<string, number>()
   for (const sale of mtdSales) {
-    const method = sale.paymentMethod.toUpperCase()
-    paymentTotals.set(method, (paymentTotals.get(method) || 0) + sale.total)
+    if ((sale as any).payments && (sale as any).payments.length > 0) {
+      for (const p of (sale as any).payments) {
+        const method = (p.method || 'CASH').toUpperCase()
+        paymentTotals.set(method, (paymentTotals.get(method) || 0) + (p.amount || 0))
+      }
+    } else {
+      const method = (sale.paymentMethod || 'CASH').toUpperCase()
+      paymentTotals.set(method, (paymentTotals.get(method) || 0) + sale.total)
+    }
   }
   const paymentData: any[] = []
   paymentTotals.forEach((value, method) => {
@@ -680,14 +729,20 @@ ipcMain.handle('dashboard:stats', async () => {
   // Recent Transactions
   const recentTransactions = [...mtdSales]
     .sort((a, b) => b.date.getTime() - a.date.getTime())
-    .map((sale) => ({
-      id: `INV-${sale.id.slice(0, 6).toUpperCase()}`,
-      customer: sale.customer?.name || 'Walk-in Customer',
-      time: sale.date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
-      date: sale.date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
-      amount: sale.total,
-      paymentMethod: sale.paymentMethod
-    }))
+    .map((sale) => {
+      let pMethod = sale.paymentMethod
+      if (sale.paymentMethod === 'SPLIT' && (sale as any).payments && (sale as any).payments.length > 0) {
+        pMethod = `Split (${(sale as any).payments.map((p: any) => PAYMENT_LABELS[p.method.toUpperCase()] || p.method).join(' + ')})`
+      }
+      return {
+        id: `INV-${sale.id.slice(0, 6).toUpperCase()}`,
+        customer: sale.customer?.name || 'Walk-in Customer',
+        time: sale.date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
+        date: sale.date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+        amount: sale.total,
+        paymentMethod: pMethod
+      }
+    })
 
   const lowStockItems = lowStockBatches.map(b => ({
     name: b.medicine?.name || 'Unknown',
@@ -1047,6 +1102,7 @@ async function buildReportsData(startDate: string, endDate: string) {
       include: {
         customer: true,
         items: { include: { batch: { include: { medicine: true } } } },
+        payments: true,
       },
       orderBy: { date: 'desc' },
     }),
@@ -1068,7 +1124,7 @@ async function buildReportsData(startDate: string, endDate: string) {
     }),
     prisma.sale.findMany({
       where: { date: { gte: start, lte: end } },
-      include: { customer: true },
+      include: { customer: true, payments: true },
       orderBy: { date: 'desc' },
       take: 8,
     }),
@@ -1117,8 +1173,15 @@ async function buildReportsData(startDate: string, endDate: string) {
 
   const paymentTotals = new Map<string, number>()
   for (const sale of sales) {
-    const method = sale.paymentMethod.toUpperCase()
-    paymentTotals.set(method, (paymentTotals.get(method) || 0) + sale.total)
+    if ((sale as any).payments && (sale as any).payments.length > 0) {
+      for (const p of (sale as any).payments) {
+        const method = (p.method || 'CASH').toUpperCase()
+        paymentTotals.set(method, (paymentTotals.get(method) || 0) + (p.amount || 0))
+      }
+    } else {
+      const method = (sale.paymentMethod || 'CASH').toUpperCase()
+      paymentTotals.set(method, (paymentTotals.get(method) || 0) + sale.total)
+    }
   }
 
   const paymentBreakdownArr: any[] = []
@@ -1150,13 +1213,19 @@ async function buildReportsData(startDate: string, endDate: string) {
     .sort((a, b) => b.revenue - a.revenue)
     .slice(0, 5)
 
-  const recentTransactions = recentSales.map((sale) => ({
-    id: `INV-${sale.id.slice(0, 8).toUpperCase()}`,
-    customer: sale.customer?.name || 'Walk-in Customer',
-    amount: sale.total,
-    payment: PAYMENT_LABELS[sale.paymentMethod.toUpperCase()] || sale.paymentMethod,
-    time: formatTime(sale.date),
-  }))
+  const recentTransactions = recentSales.map((sale) => {
+    let paymentLabel = PAYMENT_LABELS[sale.paymentMethod.toUpperCase()] || sale.paymentMethod
+    if (sale.paymentMethod.toUpperCase() === 'SPLIT' && (sale as any).payments && (sale as any).payments.length > 0) {
+      paymentLabel = `Split (${(sale as any).payments.map((p: any) => PAYMENT_LABELS[p.method.toUpperCase()] || p.method).join(' + ')})`
+    }
+    return {
+      id: `INV-${sale.id.slice(0, 8).toUpperCase()}`,
+      customer: sale.customer?.name || 'Walk-in Customer',
+      amount: sale.total,
+      payment: paymentLabel,
+      time: formatTime(sale.date),
+    }
+  })
 
   const expiring = expiringBatches.map((batch) => ({
     name: batch.medicine.name,
@@ -1256,13 +1325,14 @@ ipcMain.handle('users:getAll', async () => {
   })
 })
 
-ipcMain.handle('users:create', async (_, data: { username: string; passwordHash: string; role: string }) => {
+ipcMain.handle('users:create', async (_, data: { username: string; passwordHash: string; role: string; pin?: string }) => {
   const password = await bcrypt.hash(data.passwordHash, 10)
   const newUser = await prisma.user.create({
     data: {
       username: data.username,
       password: password,
       role: data.role,
+      pin: data.pin || null,
     }
   })
   await recordAudit({

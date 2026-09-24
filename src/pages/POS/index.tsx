@@ -26,10 +26,16 @@ import {
   CheckCircle2,
   AlertCircle,
   Play,
+  Split,
 } from 'lucide-react'
 import type { Category, Customer } from '@/types'
 import { cn } from '@/utils'
 import { enqueueSyncItem } from '@/services/sync/syncQueue'
+
+export interface SplitPaymentEntry {
+  method: 'CASH' | 'MOBILE' | 'CARD' | 'BANK TRANSFER'
+  amount: number
+}
 
 interface CartItem {
   medicine: any
@@ -45,7 +51,9 @@ interface HeldSale {
   cart: CartItem[]
   discountPercent: number
   customerId?: string
-  paymentMethod: 'CASH' | 'MOBILE'
+  paymentMethod: 'CASH' | 'MOBILE' | 'SPLIT'
+  splitPayments?: SplitPaymentEntry[]
+  cashTendered?: number | ''
 }
 
 interface ToastMessage {
@@ -177,11 +185,79 @@ function CartPanelContent({
   currencySymbol,
   paymentMethod,
   setPaymentMethod,
+  splitPayments,
+  setSplitPayments,
+  cashTendered,
+  setCashTendered,
   handleCheckout,
   createSaleMutation,
   setToast,
   onClose,
 }: any) {
+  const allocatedTotal = paymentMethod === 'SPLIT'
+    ? splitPayments.reduce((acc: number, p: any) => acc + (Number(p.amount) || 0), 0)
+    : total
+  const remainingToAllocate = Math.max(0, Math.round((total - allocatedTotal) * 100) / 100)
+  const overAllocated = Math.max(0, Math.round((allocatedTotal - total) * 100) / 100)
+  const isSplitBalanced = Math.abs(allocatedTotal - total) < 0.01
+
+  const cashSplitEntry = splitPayments?.find((p: any) => p.method === 'CASH')
+  const cashAmount = cashSplitEntry ? Number(cashSplitEntry.amount) || 0 : 0
+  const changeDue = (typeof cashTendered === 'number' && cashTendered > cashAmount)
+    ? Math.round((cashTendered - cashAmount) * 100) / 100
+    : 0
+
+  const handleSplit5050 = () => {
+    const half = Math.round((total / 2) * 100) / 100
+    const otherHalf = Math.round((total - half) * 100) / 100
+    setSplitPayments([
+      { method: 'CASH', amount: half },
+      { method: 'MOBILE', amount: otherHalf },
+    ])
+  }
+
+  const handleResetSplit = () => {
+    setSplitPayments([
+      { method: 'CASH', amount: total },
+      { method: 'MOBILE', amount: 0 },
+    ])
+  }
+
+  const handleFillRow = (index: number) => {
+    const otherAllocated = splitPayments.reduce((acc: number, p: any, idx: number) => {
+      return idx === index ? acc : acc + (Number(p.amount) || 0)
+    }, 0)
+    const needed = Math.max(0, Math.round((total - otherAllocated) * 100) / 100)
+    setSplitPayments((prev: any[]) =>
+      prev.map((item, idx) => (idx === index ? { ...item, amount: needed } : item))
+    )
+  }
+
+  const handleUpdateSplitAmount = (index: number, val: number) => {
+    setSplitPayments((prev: any[]) =>
+      prev.map((item, idx) => (idx === index ? { ...item, amount: isNaN(val) ? 0 : Math.max(0, val) } : item))
+    )
+  }
+
+  const handleUpdateSplitMethod = (index: number, method: any) => {
+    setSplitPayments((prev: any[]) =>
+      prev.map((item, idx) => (idx === index ? { ...item, method } : item))
+    )
+  }
+
+  const handleAddSplitMethod = () => {
+    if (splitPayments.length >= 4) return
+    const usedMethods = new Set(splitPayments.map((p: any) => p.method))
+    const candidates: any[] = ['CASH', 'MOBILE', 'CARD', 'BANK TRANSFER']
+    const nextMethod = candidates.find((m) => !usedMethods.has(m)) || 'CARD'
+    const needed = Math.max(0, Math.round((total - allocatedTotal) * 100) / 100)
+    setSplitPayments((prev: any[]) => [...prev, { method: nextMethod, amount: needed }])
+  }
+
+  const handleRemoveSplitRow = (index: number) => {
+    if (splitPayments.length <= 1) return
+    setSplitPayments((prev: any[]) => prev.filter((_: any, idx: number) => idx !== index))
+  }
   return (
     <div className="flex flex-1 flex-col overflow-hidden bg-[#fafbfc]">
       <div className="flex items-center justify-between border-b border-slate-200/80 bg-white px-4 py-3.5">
@@ -333,12 +409,14 @@ function CartPanelContent({
       </div>
 
       <div className="bg-white px-4 pb-3">
-        <div className="mb-3 grid grid-cols-2 gap-2">
+        {/* Payment Method Selector (3 options: Cash, Mobile, Split) */}
+        <div className="mb-2.5 grid grid-cols-3 gap-1.5 sm:gap-2">
           <button
+            type="button"
             onClick={() => setPaymentMethod('CASH')}
             className={cn(
-              'flex flex-col items-center gap-1 rounded-xl py-2.5 text-[11px] font-bold text-white transition-all active:scale-95',
-              paymentMethod === 'CASH' && 'ring-2 ring-green-400 ring-offset-1'
+              'flex flex-col items-center gap-1 rounded-xl py-2 sm:py-2.5 text-[10px] sm:text-[11px] font-bold text-white transition-all active:scale-95 shadow-xs',
+              paymentMethod === 'CASH' ? 'ring-2 ring-emerald-400 ring-offset-1 scale-[1.02]' : 'opacity-85 hover:opacity-100'
             )}
             style={{ background: 'linear-gradient(135deg, #22c55e, #16a34a)' }}
           >
@@ -346,30 +424,224 @@ function CartPanelContent({
             Cash
           </button>
           <button
+            type="button"
             onClick={() => setPaymentMethod('MOBILE')}
             className={cn(
-              'flex flex-col items-center gap-1 rounded-xl py-2.5 text-[11px] font-bold text-white transition-all active:scale-95',
-              paymentMethod === 'MOBILE' && 'ring-2 ring-amber-400 ring-offset-1'
+              'flex flex-col items-center gap-1 rounded-xl py-2 sm:py-2.5 text-[10px] sm:text-[11px] font-bold text-white transition-all active:scale-95 shadow-xs',
+              paymentMethod === 'MOBILE' ? 'ring-2 ring-amber-400 ring-offset-1 scale-[1.02]' : 'opacity-85 hover:opacity-100'
             )}
             style={{ background: 'linear-gradient(135deg, #f59e0b, #ea580c)' }}
           >
             <Smartphone className="h-4 w-4" />
             Mobile
           </button>
+          <button
+            type="button"
+            onClick={() => {
+              setPaymentMethod('SPLIT')
+              if (splitPayments.every((p: any) => (Number(p.amount) || 0) === 0)) {
+                const half = Math.round((total / 2) * 100) / 100
+                setSplitPayments([
+                  { method: 'CASH', amount: half },
+                  { method: 'MOBILE', amount: Math.round((total - half) * 100) / 100 },
+                ])
+              }
+            }}
+            className={cn(
+              'flex flex-col items-center gap-1 rounded-xl py-2 sm:py-2.5 text-[10px] sm:text-[11px] font-bold text-white transition-all active:scale-95 shadow-xs',
+              paymentMethod === 'SPLIT' ? 'ring-2 ring-purple-400 ring-offset-1 scale-[1.02]' : 'opacity-85 hover:opacity-100'
+            )}
+            style={{ background: 'linear-gradient(135deg, #8b5cf6, #6366f1)' }}
+          >
+            <Split className="h-4 w-4" />
+            Split
+          </button>
         </div>
 
-        <button
-          onClick={() => {
-            handleCheckout()
-            if (onClose) onClose()
-          }}
-          disabled={cart.length === 0 || createSaleMutation.isPending}
-          className="flex w-full items-center justify-center gap-2 rounded-xl py-3.5 text-sm font-bold text-white shadow-md transition-all hover:opacity-95 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-50"
-          style={{ background: 'linear-gradient(135deg, #1d4ed8 0%, #4f46e5 100%)' }}
-        >
-          {createSaleMutation.isPending ? 'Processing...' : `Checkout (${currencySymbol}${total.toFixed(2)})`}
-          {!createSaleMutation.isPending && <ArrowRight className="h-4 w-4" />}
-        </button>
+        {/* Split Payment Breakdown Panel */}
+        {paymentMethod === 'SPLIT' && (
+          <div className="mb-3 space-y-2 rounded-xl border border-purple-200 bg-purple-50/60 p-2.5 sm:p-3 animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-purple-900 flex items-center gap-1.5">
+                <Split className="h-3.5 w-3.5 text-purple-600" />
+                Split Allocation
+              </span>
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={handleSplit5050}
+                  className="rounded-md bg-purple-100 px-2 py-0.5 text-[10px] font-semibold text-purple-700 hover:bg-purple-200 transition-colors"
+                >
+                  50 / 50
+                </button>
+                <button
+                  type="button"
+                  onClick={handleResetSplit}
+                  className="rounded-md bg-slate-200 px-2 py-0.5 text-[10px] font-semibold text-slate-700 hover:bg-slate-300 transition-colors"
+                >
+                  Reset
+                </button>
+              </div>
+            </div>
+
+            {/* Payment Method Rows */}
+            <div className="space-y-1.5">
+              {splitPayments.map((p: any, idx: number) => (
+                <div key={idx} className="flex items-center gap-1.5 bg-white/95 p-1.5 rounded-lg border border-purple-100 shadow-2xs">
+                  <select
+                    value={p.method}
+                    onChange={(e) => handleUpdateSplitMethod(idx, e.target.value)}
+                    className="rounded border border-slate-200 bg-white px-1.5 py-1 text-[11px] font-semibold text-slate-700 outline-none focus:border-purple-400"
+                  >
+                    <option value="CASH">Cash</option>
+                    <option value="MOBILE">Mobile Money</option>
+                    <option value="CARD">Card</option>
+                    <option value="BANK TRANSFER">Bank Transfer</option>
+                  </select>
+
+                  <div className="relative flex-1 min-w-0">
+                    <span className="absolute left-2 top-1 text-[11px] font-bold text-slate-400">{currencySymbol}</span>
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={p.amount === 0 ? '' : p.amount}
+                      onChange={(e) => handleUpdateSplitAmount(idx, parseFloat(e.target.value) || 0)}
+                      placeholder="0.00"
+                      className="w-full rounded border border-slate-200 bg-white py-1 pl-5 pr-1.5 text-right text-xs font-bold text-slate-800 outline-none focus:border-purple-400"
+                    />
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => handleFillRow(idx)}
+                    title="Fill remaining balance into this method"
+                    className="rounded bg-purple-100 px-2 py-1 text-[10px] font-bold text-purple-700 hover:bg-purple-200 active:scale-95 transition-colors"
+                  >
+                    Fill
+                  </button>
+
+                  {splitPayments.length > 1 && (
+                    <button
+                      type="button"
+                      onClick={() => handleRemoveSplitRow(idx)}
+                      className="p-1 text-slate-300 hover:text-red-500 rounded transition-colors"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+
+            {splitPayments.length < 4 && (
+              <button
+                type="button"
+                onClick={handleAddSplitMethod}
+                className="w-full text-center py-1 rounded-lg border border-dashed border-purple-300 text-[11px] font-semibold text-purple-700 hover:bg-purple-100/60 transition-colors"
+              >
+                + Add Another Method
+              </button>
+            )}
+
+            {/* Split Status Bar */}
+            <div className="pt-1.5 border-t border-purple-200/60 space-y-1">
+              <div className="flex items-center justify-between text-[11px]">
+                <span className="text-slate-500">Allocated / Total:</span>
+                <span className="font-bold text-slate-700">{currencySymbol}{allocatedTotal.toFixed(2)} / {currencySymbol}{total.toFixed(2)}</span>
+              </div>
+
+              {!isSplitBalanced && remainingToAllocate > 0 && (
+                <div className="flex items-center justify-between rounded-md bg-amber-100/80 px-2 py-1 text-[11px] font-bold text-amber-800">
+                  <span>Remaining to Allocate:</span>
+                  <span>{currencySymbol}{remainingToAllocate.toFixed(2)}</span>
+                </div>
+              )}
+
+              {!isSplitBalanced && overAllocated > 0 && (
+                <div className="flex items-center justify-between rounded-md bg-red-100/80 px-2 py-1 text-[11px] font-bold text-red-800">
+                  <span>Over-allocated by:</span>
+                  <span>{currencySymbol}{overAllocated.toFixed(2)}</span>
+                </div>
+              )}
+
+              {isSplitBalanced && (
+                <div className="flex items-center justify-between rounded-md bg-emerald-100/80 px-2 py-1 text-[11px] font-bold text-emerald-800">
+                  <span>Split Status:</span>
+                  <span className="flex items-center gap-1">
+                    <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
+                    100% Balanced
+                  </span>
+                </div>
+              )}
+
+              {/* Cash Portion Change Calculation (if cash is part of split) */}
+              {cashAmount > 0 && (
+                <div className="mt-2 pt-2 border-t border-purple-200/60">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[11px] text-slate-600">Cash Handed / Tendered:</span>
+                    <div className="relative w-24">
+                      <span className="absolute left-2 top-1 text-[10px] font-bold text-slate-400">{currencySymbol}</span>
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        placeholder={cashAmount.toFixed(2)}
+                        value={cashTendered}
+                        onChange={(e) => setCashTendered(e.target.value === '' ? '' : Number(e.target.value))}
+                        className="w-full rounded border border-slate-200 bg-white py-0.5 pl-4 pr-1 text-right text-xs font-bold text-slate-800 outline-none focus:border-purple-400"
+                      />
+                    </div>
+                  </div>
+                  {changeDue > 0 && (
+                    <div className="mt-1 flex items-center justify-between rounded bg-emerald-50 px-2 py-1 text-[11px] font-bold text-emerald-800">
+                      <span>Change to Return:</span>
+                      <span className="text-emerald-700">{currencySymbol}{changeDue.toFixed(2)}</span>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Checkout Button */}
+        {(() => {
+          const isSplitInvalid = paymentMethod === 'SPLIT' && !isSplitBalanced
+          return (
+            <button
+              onClick={() => {
+                handleCheckout()
+                if (onClose) onClose()
+              }}
+              disabled={cart.length === 0 || createSaleMutation.isPending || isSplitInvalid}
+              className={cn(
+                'flex w-full items-center justify-center gap-2 rounded-xl py-3.5 text-sm font-bold text-white shadow-md transition-all',
+                isSplitInvalid
+                  ? 'bg-slate-300 text-slate-500 cursor-not-allowed shadow-none'
+                  : 'hover:opacity-95 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-50'
+              )}
+              style={
+                isSplitInvalid
+                  ? undefined
+                  : paymentMethod === 'SPLIT'
+                    ? { background: 'linear-gradient(135deg, #7c3aed 0%, #4f46e5 100%)' }
+                    : { background: 'linear-gradient(135deg, #1d4ed8 0%, #4f46e5 100%)' }
+              }
+            >
+              {createSaleMutation.isPending
+                ? 'Processing...'
+                : isSplitInvalid
+                  ? remainingToAllocate > 0
+                    ? `Allocate ${currencySymbol}${remainingToAllocate.toFixed(2)} more`
+                    : `Reduce by ${currencySymbol}${overAllocated.toFixed(2)}`
+                  : paymentMethod === 'SPLIT'
+                    ? `Complete Split Sale (${currencySymbol}${total.toFixed(2)})`
+                    : `Checkout (${currencySymbol}${total.toFixed(2)})`}
+              {!createSaleMutation.isPending && !isSplitInvalid && <ArrowRight className="h-4 w-4" />}
+            </button>
+          )
+        })()}
       </div>
 
       <div className="grid grid-cols-2 gap-2 bg-white px-4 pb-4">
@@ -401,7 +673,12 @@ export default function POS() {
   const [page, setPage] = useState(1)
   const [cart, setCart] = useState<CartItem[]>([])
   const [discountPercent, setDiscountPercent] = useState<number>(0)
-  const [paymentMethod, setPaymentMethod] = useState<'CASH' | 'MOBILE'>('CASH')
+  const [paymentMethod, setPaymentMethod] = useState<'CASH' | 'MOBILE' | 'SPLIT'>('CASH')
+  const [splitPayments, setSplitPayments] = useState<SplitPaymentEntry[]>([
+    { method: 'CASH', amount: 0 },
+    { method: 'MOBILE', amount: 0 },
+  ])
+  const [cashTendered, setCashTendered] = useState<number | ''>('')
   const [selectedCustomerId, setSelectedCustomerId] = useState<string>('')
   const [heldSales, setHeldSales] = useState<HeldSale[]>([])
   const [isHeldModalOpen, setIsHeldModalOpen] = useState(false)
@@ -506,6 +783,38 @@ export default function POS() {
       const taxLine = enableTax && tax > 0 ? `<tr><td style="padding:2px 0;">Tax (${taxRate}%):</td><td colspan="2" style="text-align:right;">${currencySymbol}${tax.toFixed(2)}</td></tr>` : ''
       const subtotalLine = (enableDiscount && discountAmt > 0) || (enableTax && tax > 0) ? `<tr><td style="padding:2px 0;">Subtotal:</td><td colspan="2" style="text-align:right;">${currencySymbol}${subtotal.toFixed(2)}</td></tr>` : ''
 
+      const isSplit = paymentMethod === 'SPLIT' && splitPayments.some((p) => p.amount > 0)
+      const activePayments = isSplit
+        ? splitPayments.filter((p) => p.amount > 0)
+        : [{ method: paymentMethod, amount: total }]
+
+      let paymentSectionHTML = `<p style="margin:2px 0;font-size:11px;">Payment: ${paymentMethod === 'MOBILE' ? 'MOBILE MONEY' : paymentMethod}</p>`
+      if (isSplit) {
+        paymentSectionHTML = `
+          <div style="margin:4px 0 2px 0;">
+            <p style="margin:0 0 2px 0;font-size:11px;font-weight:bold;">Payment: SPLIT PAYMENT</p>
+            <table style="width:100%;font-size:10px;border-collapse:collapse;">
+              ${activePayments.map((p) => `
+                <tr>
+                  <td style="padding:1px 0;color:#222;">• ${p.method === 'MOBILE' ? 'Mobile Money' : p.method === 'BANK TRANSFER' ? 'Bank Transfer' : p.method}:</td>
+                  <td style="text-align:right;padding:1px 0;font-weight:bold;">${currencySymbol}${p.amount.toFixed(2)}</td>
+                </tr>
+              `).join('')}
+              ${typeof cashTendered === 'number' && cashTendered > (activePayments.find((p) => p.method === 'CASH')?.amount || 0) ? `
+                <tr>
+                  <td style="padding:1px 0;color:#555;">Cash Tendered:</td>
+                  <td style="text-align:right;padding:1px 0;">${currencySymbol}${cashTendered.toFixed(2)}</td>
+                </tr>
+                <tr>
+                  <td style="padding:1px 0;font-weight:bold;color:#16a34a;">Change Returned:</td>
+                  <td style="text-align:right;padding:1px 0;font-weight:bold;color:#16a34a;">${currencySymbol}${(cashTendered - (activePayments.find((p) => p.method === 'CASH')?.amount || 0)).toFixed(2)}</td>
+                </tr>
+              ` : ''}
+            </table>
+          </div>
+        `
+      }
+
       const receiptHTML = `
         <div style="font-family:'Courier New',Courier,monospace;width:290px;padding:12px;margin:0 auto;color:#000;font-size:12px;">
           <h2 style="text-align:center;margin:0 0 4px 0;font-size:16px;font-weight:bold;">${storeName.toUpperCase()}</h2>
@@ -515,7 +824,7 @@ export default function POS() {
           <hr style="border-top:1px dashed #000;margin:8px 0;"/>
           <p style="margin:2px 0;font-size:11px;">Date: ${new Date().toLocaleString('en-GB')}</p>
           <p style="margin:2px 0;font-size:11px;">Receipt: INV-${sale.id.slice(0, 8).toUpperCase()}</p>
-          <p style="margin:2px 0;font-size:11px;">Payment: ${paymentMethod}</p>
+          ${paymentSectionHTML}
           <hr style="border-top:1px dashed #000;margin:8px 0;"/>
           <table style="width:100%;font-size:11px;border-collapse:collapse;">
             <thead>
@@ -556,7 +865,10 @@ export default function POS() {
         enqueueSyncItem('SALE', 'INSERT', {
           id: sale.id,
           total,
-          paymentMethod,
+          paymentMethod: isSplit
+            ? `SPLIT (${activePayments.map((p) => p.method).join('+')})`
+            : paymentMethod,
+          payments: activePayments,
           date: new Date().toISOString(),
           customerName: customers.find((c) => c.id === selectedCustomerId)?.name || 'Walk-in Customer',
           items: cart.map((item) => ({
@@ -564,8 +876,8 @@ export default function POS() {
             name: item.medicine.name,
             sku: item.medicine.sku,
             quantity: item.quantity,
-            price: item.price,
-            cost: item.medicine.cost,
+            price: item.medicine?.price ?? item.price ?? 0,
+            cost: item.medicine?.cost ?? item.cost ?? 0,
           })),
         })
       } catch (syncErr) {
@@ -575,6 +887,12 @@ export default function POS() {
       setCart([])
       setDiscountPercent(0)
       setSelectedCustomerId('')
+      setCashTendered('')
+      setPaymentMethod('CASH')
+      setSplitPayments([
+        { method: 'CASH', amount: 0 },
+        { method: 'MOBILE', amount: 0 },
+      ])
       setIsCartDrawerOpen(false)
       setToast({ type: 'success', message: 'Sale checkout completed successfully!' })
     },
@@ -703,11 +1021,19 @@ export default function POS() {
       discountPercent,
       customerId: selectedCustomerId,
       paymentMethod,
+      splitPayments: paymentMethod === 'SPLIT' ? [...splitPayments] : undefined,
+      cashTendered: typeof cashTendered === 'number' ? cashTendered : undefined,
     }
     setHeldSales((prev) => [newHold, ...prev])
     setCart([])
     setDiscountPercent(0)
     setSelectedCustomerId('')
+    setCashTendered('')
+    setPaymentMethod('CASH')
+    setSplitPayments([
+      { method: 'CASH', amount: 0 },
+      { method: 'MOBILE', amount: 0 },
+    ])
     setIsCartDrawerOpen(false)
     setToast({ type: 'success', message: 'Sale held successfully.' })
   }
@@ -717,6 +1043,8 @@ export default function POS() {
     setDiscountPercent(held.discountPercent)
     if (held.customerId) setSelectedCustomerId(held.customerId)
     if (held.paymentMethod) setPaymentMethod(held.paymentMethod)
+    if (held.splitPayments) setSplitPayments(held.splitPayments)
+    if (held.cashTendered !== undefined) setCashTendered(held.cashTendered)
     setHeldSales((prev) => prev.filter((h) => h.id !== held.id))
     setIsHeldModalOpen(false)
     setToast({ type: 'success', message: 'Held sale resumed.' })
@@ -729,6 +1057,19 @@ export default function POS() {
   const handleCheckout = () => {
     if (cart.length === 0) return
 
+    if (paymentMethod === 'SPLIT') {
+      const allocated = splitPayments.reduce((acc, p) => acc + (Number(p.amount) || 0), 0)
+      if (Math.abs(allocated - total) > 0.01) {
+        setToast({
+          type: 'error',
+          message: allocated < total
+            ? `Please allocate the remaining ${currencySymbol}${(total - allocated).toFixed(2)} to complete split payment.`
+            : `Split amounts exceed total by ${currencySymbol}${(allocated - total).toFixed(2)}. Please balance amounts.`,
+        })
+        return
+      }
+    }
+
     const items = cart.flatMap((c) =>
       c.allocations.map((a) => ({
         batchId: a.batchId,
@@ -737,8 +1078,13 @@ export default function POS() {
       }))
     )
 
+    const activePayments = paymentMethod === 'SPLIT'
+      ? splitPayments.filter((p) => p.amount > 0).map((p) => ({ method: p.method, amount: p.amount }))
+      : [{ method: paymentMethod, amount: total }]
+
     createSaleMutation.mutate({
       paymentMethod,
+      payments: activePayments,
       total,
       items,
       customerId: selectedCustomerId || undefined,
@@ -821,7 +1167,7 @@ export default function POS() {
                       <div>
                         <p className="text-xs font-bold text-slate-800">Hold at {h.timestamp}</p>
                         <p className="text-[11px] text-slate-500">
-                          {h.cart.length} item(s) • Total: {currencySymbol}{heldTotal.toFixed(2)}
+                          {h.cart.length} item(s) • Total: {currencySymbol}{heldTotal.toFixed(2)} • <span className={cn('font-semibold', h.paymentMethod === 'SPLIT' ? 'text-purple-600' : 'text-slate-700')}>{h.paymentMethod}</span>
                         </p>
                       </div>
                       <div className="flex items-center gap-2">
@@ -877,6 +1223,10 @@ export default function POS() {
               currencySymbol={currencySymbol}
               paymentMethod={paymentMethod}
               setPaymentMethod={setPaymentMethod}
+              splitPayments={splitPayments}
+              setSplitPayments={setSplitPayments}
+              cashTendered={cashTendered}
+              setCashTendered={setCashTendered}
               handleCheckout={handleCheckout}
               createSaleMutation={createSaleMutation}
               setToast={setToast}
@@ -1149,6 +1499,10 @@ export default function POS() {
             currencySymbol={currencySymbol}
             paymentMethod={paymentMethod}
             setPaymentMethod={setPaymentMethod}
+            splitPayments={splitPayments}
+            setSplitPayments={setSplitPayments}
+            cashTendered={cashTendered}
+            setCashTendered={setCashTendered}
             handleCheckout={handleCheckout}
             createSaleMutation={createSaleMutation}
             setToast={setToast}

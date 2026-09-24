@@ -8,10 +8,13 @@ export interface SupabaseConfig {
 
 const STORAGE_KEY = 'sml_coldstore_supabase_config'
 
-// Default fallback config (or configured via environment variables)
+// Default Supabase config for SML Legacy Limited cloud database
+const DEFAULT_URL = (import.meta as any).env?.VITE_SUPABASE_URL || 'https://yhglbervaljjkmttzonk.supabase.co'
+const DEFAULT_ANON_KEY = (import.meta as any).env?.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InloZ2xiZXJ2YWxqamttdHR6b25rIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTAwNDA4MzIsImV4cCI6MjEwNTYxNjgzMn0.8STKvBtPKL3J9BH7Mdvadrna-zcYYFqGXGaBx4y_Wis'
+
 const DEFAULT_CONFIG: SupabaseConfig = {
-  url: (import.meta as any).env?.VITE_SUPABASE_URL || '',
-  anonKey: (import.meta as any).env?.VITE_SUPABASE_ANON_KEY || '',
+  url: DEFAULT_URL,
+  anonKey: DEFAULT_ANON_KEY,
   enabled: true,
 }
 
@@ -24,7 +27,11 @@ export function getSupabaseConfig(): SupabaseConfig {
     const raw = localStorage.getItem(STORAGE_KEY)
     if (raw) {
       const parsed = JSON.parse(raw)
-      return { ...DEFAULT_CONFIG, ...parsed }
+      return {
+        url: parsed.url && parsed.url.trim() ? parsed.url.trim() : DEFAULT_CONFIG.url,
+        anonKey: parsed.anonKey && parsed.anonKey.trim() ? parsed.anonKey.trim() : DEFAULT_CONFIG.anonKey,
+        enabled: parsed.enabled ?? true,
+      }
     }
   } catch {
     // fallback
@@ -148,5 +155,38 @@ export async function checkCloudConnection(): Promise<ConnectionCheckResult> {
         : (err.message || 'Connection test failed'),
       latencyMs,
     }
+  }
+}
+
+/**
+ * Realtime subscription to cloud_sales table.
+ * Automatically notifies when new sales are created, updated, or synced in Supabase.
+ */
+export function subscribeToCloudSales(onUpdate: (payload: any) => void): () => void {
+  const client = getSupabaseClient()
+  if (!client) return () => {}
+
+  try {
+    const channel = client
+      .channel('cloud_sales_realtime')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'cloud_sales' },
+        (payload) => {
+          onUpdate(payload)
+        }
+      )
+      .subscribe((status) => {
+        if (status === 'SUBSCRIBED') {
+          console.log('📡 [Supabase Realtime] Connected to cloud_sales stream')
+        }
+      })
+
+    return () => {
+      client.removeChannel(channel)
+    }
+  } catch (err) {
+    console.warn('📡 [Supabase Realtime] Subscription error:', err)
+    return () => {}
   }
 }

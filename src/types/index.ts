@@ -61,12 +61,20 @@ export interface SaleItem {
   price: number
 }
 
+export interface SalePayment {
+  id?: string
+  saleId?: string
+  method: string
+  amount: number
+}
+
 export interface Sale {
   id: string
   customerId?: string | null
   date: string
   total: number
   paymentMethod: string
+  payments?: SalePayment[]
   items?: SaleItem[]
 }
 

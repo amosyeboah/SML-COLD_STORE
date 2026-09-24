@@ -469,6 +469,7 @@ export default function Dashboard() {
                       tx.paymentMethod === 'CASH' ? 'bg-emerald-50 text-emerald-700' : 
                       tx.paymentMethod === 'MOBILE' ? 'bg-amber-50 text-amber-700' :
                       tx.paymentMethod === 'CARD' ? 'bg-blue-50 text-blue-700' :
+                      (tx.paymentMethod && tx.paymentMethod.toUpperCase().includes('SPLIT')) ? 'bg-purple-50 text-purple-700 border border-purple-200' :
                       'bg-slate-100 text-slate-700'
                     )}>
                       {tx.paymentMethod}

@@ -1,4 +1,5 @@
 import { enqueueSyncItem } from '../sync/syncQueue'
+import { getSupabaseClient } from '../sync/supabaseClient'
 
 // Browser-compatible password hashing using Web Crypto API (no Node.js deps)
 async function hashPassword(password: string): Promise<string> {
@@ -56,6 +57,71 @@ function getItem<T>(key: string, defaultValue: T): T {
 
 function setItem<T>(key: string, value: T): void {
   localStorage.setItem(key, JSON.stringify(value))
+}
+
+/**
+ * Fetches latest sales and items directly from Supabase Cloud.
+ * Caches and merges them into local storage so web portal displays real-time data automatically.
+ */
+export async function fetchCloudSalesIfAvailable(): Promise<any[]> {
+  const localSales = getItem<any[]>(STORAGE_KEYS.SALES, [])
+  const client = getSupabaseClient()
+  if (!client || !navigator.onLine) {
+    return localSales
+  }
+
+  try {
+    const [salesRes, itemsRes] = await Promise.all([
+      client.from('cloud_sales').select('*').order('date', { ascending: false }),
+      client.from('cloud_sale_items').select('*'),
+    ])
+
+    if (salesRes.error || !salesRes.data) {
+      return localSales
+    }
+
+    const cloudSales = salesRes.data || []
+    const cloudItems = itemsRes.data || []
+
+    const mappedSales = cloudSales.map((s: any) => {
+      const relatedItems = cloudItems.filter((i: any) => i.sale_id === s.id)
+      return {
+        id: s.id,
+        saleNumber: s.sale_number || `INV-${String(s.id).slice(0, 8).toUpperCase()}`,
+        customerId: null,
+        customerName: s.customer_name || 'Walk-in Customer',
+        paymentMethod: s.payment_method || 'CASH',
+        total: Number(s.total) || 0,
+        date: s.date || s.created_at,
+        cashier: s.cashier_username || 'cashier',
+        items: relatedItems.map((item: any) => ({
+          id: item.id,
+          batchId: item.product_id,
+          quantity: Number(item.quantity) || 1,
+          price: Number(item.unit_price) || 0,
+          cost: Number(item.unit_cost) || 0,
+          name: item.product_name,
+          medicine: {
+            id: item.product_id,
+            name: item.product_name,
+            sku: item.sku,
+            price: Number(item.unit_price) || 0,
+            cost: Number(item.unit_cost) || 0,
+          },
+        })),
+      }
+    })
+
+    const cloudIds = new Set(mappedSales.map((s) => s.id))
+    const localOnly = localSales.filter((s) => !cloudIds.has(s.id))
+    const merged = [...mappedSales, ...localOnly]
+
+    setItem(STORAGE_KEYS.SALES, merged)
+    return merged
+  } catch (err) {
+    console.warn('Failed to fetch cloud sales in mobileStorage:', err)
+    return localSales
+  }
 }
 
 function generateId(): string {
@@ -138,9 +204,9 @@ async function seedInitialDataIfNeeded() {
     const cashierPassword = await hashPassword('cashier123')
 
     const initialUsers = [
-      { id: generateId(), username: 'admin', password: adminPassword, role: 'ADMIN', createdAt: new Date().toISOString() },
-      { id: generateId(), username: 'manager', password: managerPassword, role: 'MANAGER', createdAt: new Date().toISOString() },
-      { id: generateId(), username: 'cashier', password: cashierPassword, role: 'CASHIER', createdAt: new Date().toISOString() }
+      { id: generateId(), username: 'admin', password: adminPassword, pin: '1111', role: 'ADMIN', createdAt: new Date().toISOString() },
+      { id: generateId(), username: 'manager', password: managerPassword, pin: '2222', role: 'MANAGER', createdAt: new Date().toISOString() },
+      { id: generateId(), username: 'cashier', password: cashierPassword, pin: '1234', role: 'CASHIER', createdAt: new Date().toISOString() }
     ]
     setItem(STORAGE_KEYS.USERS, initialUsers)
 
@@ -248,17 +314,17 @@ export const mobileApi = {
     await seedInitialDataIfNeeded()
     const users = getItem<any[]>(STORAGE_KEYS.USERS, [])
     let targetUsername = ''
-    if (selectedRole === 'ADMIN' || pin === '1111' || pin === '9999') {
+    if ((selectedRole === 'ADMIN' && pin === '1111') || pin === '1111' || pin === '9999') {
       targetUsername = 'admin'
-    } else if (selectedRole === 'MANAGER' || pin === '2222' || pin === '5555') {
+    } else if ((selectedRole === 'MANAGER' && pin === '2222') || pin === '2222' || pin === '5555') {
       targetUsername = 'manager'
-    } else if (selectedRole === 'CASHIER' || pin === '1234' || pin === '0000') {
+    } else if ((selectedRole === 'CASHIER' && pin === '1234') || pin === '1234' || pin === '0000') {
       targetUsername = 'cashier'
     }
 
-    let user = targetUsername ? users.find(u => u.username.toLowerCase() === targetUsername.toLowerCase()) : null
-    if (!user) {
-      user = users.find(u => u.password === pin)
+    let user = users.find(u => u.pin === pin)
+    if (!user && targetUsername) {
+      user = users.find(u => u.username.toLowerCase() === targetUsername.toLowerCase())
     }
 
     if (!user) {
@@ -271,9 +337,9 @@ export const mobileApi = {
 
   // Dashboard Stats
   getDashboardStats: async () => {
+    const sales = await fetchCloudSalesIfAvailable()
     const medicines = getItem<any[]>(STORAGE_KEYS.MEDICINES, [])
     const batches = getItem<any[]>(STORAGE_KEYS.BATCHES, [])
-    const sales = getItem<any[]>(STORAGE_KEYS.SALES, [])
     const purchases = getItem<any[]>(STORAGE_KEYS.PURCHASES, [])
     const customers = getItem<any[]>(STORAGE_KEYS.CUSTOMERS, [])
 
@@ -336,8 +402,15 @@ export const mobileApi = {
     // Payment Breakdown
     const paymentTotals = new Map<string, number>()
     for (const sale of mtdSales) {
-      const method = (sale.paymentMethod || 'CASH').toUpperCase()
-      paymentTotals.set(method, (paymentTotals.get(method) || 0) + (sale.total || 0))
+      if (sale.payments && Array.isArray(sale.payments) && sale.payments.length > 0) {
+        for (const p of sale.payments) {
+          const method = (p.method || 'CASH').toUpperCase()
+          paymentTotals.set(method, (paymentTotals.get(method) || 0) + (p.amount || 0))
+        }
+      } else {
+        const method = (sale.paymentMethod || 'CASH').toUpperCase()
+        paymentTotals.set(method, (paymentTotals.get(method) || 0) + (sale.total || 0))
+      }
     }
     const paymentData: any[] = []
     paymentTotals.forEach((value, method) => {
@@ -356,7 +429,7 @@ export const mobileApi = {
       for (const item of (sale.items || [])) {
         const batch = batches.find(b => b.id === item.batchId)
         const med = medicines.find(m => m.id === (batch?.medicineId || item.medicineId))
-        const name = med?.name || item.name || 'Unknown Item'
+        const name = item.medicine?.name || item.name || med?.name || 'Cold Store Item'
         const existing = medicineTotals.get(name) || { name, qty: 0, revenue: 0 }
         existing.qty += (item.quantity || 0)
         existing.revenue += (item.price || 0) * (item.quantity || 0)
@@ -601,17 +674,24 @@ export const mobileApi = {
   },
 
   // Sales (POS)
-  createSale: async (data: { customerId?: string; paymentMethod: string; items: { batchId: string; quantity: number; price: number }[]; prescription?: { doctorName: string; notes?: string } }) => {
+  createSale: async (data: {
+    customerId?: string
+    paymentMethod: string
+    total?: number
+    items: { batchId: string; quantity: number; price: number }[]
+    payments?: { method: string; amount: number }[]
+    prescription?: { doctorName: string; notes?: string }
+  }) => {
     const sales = getItem<any[]>(STORAGE_KEYS.SALES, [])
     const batches = getItem<any[]>(STORAGE_KEYS.BATCHES, [])
     const prescriptions = getItem<any[]>(STORAGE_KEYS.PRESCRIPTIONS, [])
 
     const saleId = generateId()
-    let total = 0
+    let computedTotal = 0
 
     // Deduct inventory batches
     data.items.forEach(item => {
-      total += item.price * item.quantity
+      computedTotal += item.price * item.quantity
       const bIdx = batches.findIndex(b => b.id === item.batchId)
       if (bIdx !== -1) {
         batches[bIdx].quantity = Math.max(0, batches[bIdx].quantity - item.quantity)
@@ -619,11 +699,22 @@ export const mobileApi = {
     })
     setItem(STORAGE_KEYS.BATCHES, batches)
 
+    const finalTotal = data.total !== undefined ? data.total : computedTotal
+
+    const paymentRecords = data.payments && data.payments.length > 0
+      ? data.payments.map((p) => ({ id: generateId(), saleId, method: p.method, amount: p.amount }))
+      : [{ id: generateId(), saleId, method: data.paymentMethod || 'CASH', amount: finalTotal }]
+
+    const primaryPaymentMethod = data.payments && data.payments.length > 1
+      ? 'SPLIT'
+      : (data.payments?.[0]?.method || data.paymentMethod || 'CASH')
+
     const newSale = {
       id: saleId,
       customerId: data.customerId || null,
-      paymentMethod: data.paymentMethod,
-      total,
+      paymentMethod: primaryPaymentMethod,
+      payments: paymentRecords,
+      total: finalTotal,
       date: new Date().toISOString(),
       items: data.items.map(item => ({ id: generateId(), saleId, ...item }))
     }
@@ -645,6 +736,10 @@ export const mobileApi = {
     }
 
     return newSale
+  },
+
+  getSales: async () => {
+    return await fetchCloudSalesIfAvailable()
   },
 
   // Prescriptions
@@ -688,8 +783,8 @@ export const mobileApi = {
   },
   createUser: async (data: any) => {
     const users = getItem<any[]>(STORAGE_KEYS.USERS, [])
-    const hashedPassword = await hashPassword(data.password)
-    const newUser = { id: generateId(), username: data.username, role: data.role || 'CASHIER', password: hashedPassword, createdAt: new Date().toISOString() }
+    const hashedPassword = await hashPassword(data.passwordHash || data.password)
+    const newUser = { id: generateId(), username: data.username, role: data.role || 'CASHIER', password: hashedPassword, pin: data.pin || null, createdAt: new Date().toISOString() }
     users.push(newUser)
     setItem(STORAGE_KEYS.USERS, users)
     const { password, ...userNoPass } = newUser
@@ -699,8 +794,9 @@ export const mobileApi = {
     const users = getItem<any[]>(STORAGE_KEYS.USERS, [])
     const idx = users.findIndex(u => u.id === id)
     if (idx !== -1) {
-      if (data.password) {
-        data.password = await hashPassword(data.password)
+      if (data.passwordHash || data.password) {
+        data.password = await hashPassword(data.passwordHash || data.password)
+        delete data.passwordHash
       }
       users[idx] = { ...users[idx], ...data }
       setItem(STORAGE_KEYS.USERS, users)
@@ -725,7 +821,7 @@ export const mobileApi = {
     const prevStart = new Date(prevEnd.getTime() - periodMs)
     prevStart.setHours(0, 0, 0, 0)
 
-    const allSales = getItem<any[]>(STORAGE_KEYS.SALES, [])
+    const allSales = await fetchCloudSalesIfAvailable()
     const allPurchases = getItem<any[]>(STORAGE_KEYS.PURCHASES, [])
     const allBatches = getItem<any[]>(STORAGE_KEYS.BATCHES, [])
     const allMedicines = getItem<any[]>(STORAGE_KEYS.MEDICINES, [])
@@ -797,8 +893,15 @@ export const mobileApi = {
 
     const paymentTotals = new Map<string, number>()
     for (const sale of sales) {
-      const method = (sale.paymentMethod || 'CASH').toUpperCase()
-      paymentTotals.set(method, (paymentTotals.get(method) || 0) + (sale.total || 0))
+      if (sale.payments && Array.isArray(sale.payments) && sale.payments.length > 0) {
+        for (const p of sale.payments) {
+          const method = (p.method || 'CASH').toUpperCase()
+          paymentTotals.set(method, (paymentTotals.get(method) || 0) + (p.amount || 0))
+        }
+      } else {
+        const method = (sale.paymentMethod || 'CASH').toUpperCase()
+        paymentTotals.set(method, (paymentTotals.get(method) || 0) + (sale.total || 0))
+      }
     }
 
     const paymentBreakdown: any[] = []
@@ -829,13 +932,19 @@ export const mobileApi = {
       .sort((a, b) => b.revenue - a.revenue)
       .slice(0, 5)
 
-    const recentTransactions = sales.slice(0, 8).map((sale) => ({
-      id: `INV-${String(sale.id).slice(0, 8).toUpperCase()}`,
-      customer: allCustomers.find(c => c.id === sale.customerId)?.name || sale.customerName || 'Walk-in Customer',
-      amount: sale.total || 0,
-      payment: PAYMENT_LABELS[(sale.paymentMethod || '').toUpperCase()] || sale.paymentMethod || 'Cash',
-      time: formatTime(parseDate(sale.date)),
-    }))
+    const recentTransactions = sales.slice(0, 8).map((sale) => {
+      let paymentLabel = PAYMENT_LABELS[(sale.paymentMethod || '').toUpperCase()] || sale.paymentMethod || 'Cash'
+      if ((sale.paymentMethod || '').toUpperCase() === 'SPLIT' && sale.payments && sale.payments.length > 0) {
+        paymentLabel = `Split (${sale.payments.map((p: any) => PAYMENT_LABELS[(p.method || '').toUpperCase()] || p.method).join(' + ')})`
+      }
+      return {
+        id: `INV-${String(sale.id).slice(0, 8).toUpperCase()}`,
+        customer: allCustomers.find(c => c.id === sale.customerId)?.name || sale.customerName || 'Walk-in Customer',
+        amount: sale.total || 0,
+        payment: paymentLabel,
+        time: formatTime(parseDate(sale.date)),
+      }
+    })
 
     const in60Days = new Date(Date.now() + 60 * 24 * 60 * 60 * 1000)
     const expiringBatches = allBatches

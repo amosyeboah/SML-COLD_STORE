@@ -43,6 +43,7 @@ export const api = {
 
   // Sales (POS)
   createSale: (data: any) => ipcRenderer.invoke('sales:create', data),
+  getSales: () => ipcRenderer.invoke('sales:getAll'),
 
   // Prescriptions
   getPrescriptions: () => ipcRenderer.invoke('prescriptions:getAll'),

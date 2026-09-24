@@ -152,7 +152,11 @@ function SalesOverviewTooltip({
 }
 
 function getPaymentMethodColor(method: string) {
-  switch (method.toLowerCase()) {
+  const m = (method || '').toLowerCase()
+  if (m.includes('split')) {
+    return 'bg-purple-50 text-purple-700 border border-purple-200'
+  }
+  switch (m) {
     case 'cash':
       return 'bg-emerald-50 text-emerald-700'
     case 'mobile money':

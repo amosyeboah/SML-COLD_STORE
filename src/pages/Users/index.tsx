@@ -16,6 +16,7 @@ const userSchema = z.object({
   id: z.string().optional(),
   username: z.string().min(3, 'Username must be at least 3 characters'),
   passwordHash: z.string().optional(),
+  pin: z.string().optional(),
   role: z.enum(['ADMIN', 'MANAGER', 'CASHIER']),
 })
 type UserFormData = z.infer<typeof userSchema>
@@ -68,14 +69,17 @@ export default function Users() {
   })
 
   const onSubmit = (data: UserFormData) => {
+    const payload = { ...data }
     if (editingUser) {
-      updateUserMutation.mutate(data)
+      if (!payload.passwordHash) delete payload.passwordHash
+      if (!payload.pin) delete payload.pin
+      updateUserMutation.mutate(payload)
     } else {
-      if (!data.passwordHash) {
+      if (!payload.passwordHash) {
         alert('Password is required for new users')
         return
       }
-      createUserMutation.mutate(data)
+      createUserMutation.mutate(payload)
     }
   }
 
@@ -85,6 +89,7 @@ export default function Users() {
     setValue('username', user.username)
     setValue('role', user.role)
     setValue('passwordHash', '')
+    setValue('pin', user.pin || '')
     setIsOpen(true)
   }
 
@@ -254,6 +259,12 @@ export default function Users() {
                   <Label>Password {editingUser && <span className="text-gray-400 font-normal">(Leave blank to keep current)</span>}</Label>
                   <Input type="password" {...register('passwordHash')} placeholder="••••••••" />
                   {errors.passwordHash && <p className="text-xs text-red-500">{errors.passwordHash.message}</p>}
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label>4-Digit PIN {editingUser && <span className="text-gray-400 font-normal">(Leave blank to keep current)</span>}</Label>
+                  <Input type="text" maxLength={4} {...register('pin')} placeholder="e.g. 1234" />
+                  {errors.pin && <p className="text-xs text-red-500">{errors.pin.message}</p>}
                 </div>
 
                 <div className="space-y-1.5">

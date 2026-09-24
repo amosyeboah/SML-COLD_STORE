@@ -31,10 +31,13 @@ import {
   getLastSyncTime,
   getSyncHistory,
   flushSyncQueue,
+  reconcileAllSalesWithCloud,
   subscribeToSyncState,
   SyncQueueItem,
   SyncSessionLog,
 } from '@/services/sync/syncQueue'
+import { fetchCloudSalesIfAvailable } from '@/services/api/mobileStorage'
+import { queryClient } from '@/lib/queryClient'
 
 export default function SyncPage() {
   const [isSyncing, setIsSyncing] = useState(false)
@@ -97,7 +100,13 @@ export default function SyncPage() {
     setSyncFeedback(null)
     setIsSyncing(true)
     try {
-      const res = await flushSyncQueue()
+      const res = await reconcileAllSalesWithCloud()
+      await fetchCloudSalesIfAvailable().catch(() => {})
+      queryClient.invalidateQueries({ queryKey: ['dashboard-stats'] })
+      queryClient.invalidateQueries({ queryKey: ['reports'] })
+      queryClient.invalidateQueries({ queryKey: ['batches'] })
+      queryClient.invalidateQueries({ queryKey: ['medicines'] })
+      queryClient.invalidateQueries({ queryKey: ['sales'] })
       setSyncFeedback({
         type: res.success ? 'success' : 'error',
         message: res.message,
