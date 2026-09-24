@@ -97,6 +97,7 @@ export async function fetchCloudSalesIfAvailable(): Promise<any[]> {
         items: relatedItems.map((item: any) => ({
           id: item.id,
           batchId: item.product_id,
+          medicineId: item.product_id,
           quantity: Number(item.quantity) || 1,
           price: Number(item.unit_price) || 0,
           cost: Number(item.unit_cost) || 0,
@@ -123,6 +124,117 @@ export async function fetchCloudSalesIfAvailable(): Promise<any[]> {
     return localSales
   }
 }
+
+/**
+ * Fetches latest product catalog directly from Supabase Cloud.
+ * Caches and updates local storage so web portal displays real-time products and stock.
+ */
+export async function fetchCloudProductsIfAvailable(): Promise<any[]> {
+  const localMeds = getItem<any[]>(STORAGE_KEYS.MEDICINES, [])
+  const client = getSupabaseClient()
+  if (!client || !navigator.onLine) {
+    return localMeds
+  }
+
+  try {
+    const { data: cloudProducts, error } = await client
+      .from('cloud_products')
+      .select('*')
+      .order('name', { ascending: true })
+
+    if (error || !cloudProducts || cloudProducts.length === 0) {
+      return localMeds
+    }
+
+    // Build categories mapping
+    const existingCats = getItem<any[]>(STORAGE_KEYS.CATEGORIES, [])
+    const catMap = new Map<string, string>()
+    existingCats.forEach((c) => catMap.set(c.name.toLowerCase().trim(), c.id))
+
+    const updatedCats = [...existingCats]
+    cloudProducts.forEach((p) => {
+      const catName = (p.category_name || 'General').trim()
+      if (!catMap.has(catName.toLowerCase())) {
+        const newCatId = `cat_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`
+        catMap.set(catName.toLowerCase(), newCatId)
+        updatedCats.push({ id: newCatId, name: catName })
+      }
+    })
+    setItem(STORAGE_KEYS.CATEGORIES, updatedCats)
+
+    const mappedMeds = cloudProducts.map((p) => ({
+      id: p.id,
+      name: p.name,
+      genericName: p.generic_name || undefined,
+      sku: p.sku,
+      categoryId: catMap.get((p.category_name || 'General').toLowerCase().trim()) || 'cat-1',
+      categoryName: p.category_name || 'General',
+      price: Number(p.price) || 0,
+      cost: Number(p.cost) || 0,
+      stockQuantity: Number(p.stock_quantity) || 0,
+      minStockLevel: Number(p.min_stock_level) || 10,
+    }))
+
+    setItem(STORAGE_KEYS.MEDICINES, mappedMeds)
+    return mappedMeds
+  } catch (err) {
+    console.warn('Failed to fetch cloud products in mobileStorage:', err)
+    return localMeds
+  }
+}
+
+/**
+ * Fetches latest batches and freezer stock lots directly from Supabase Cloud.
+ */
+export async function fetchCloudBatchesIfAvailable(): Promise<any[]> {
+  const localBatches = getItem<any[]>(STORAGE_KEYS.BATCHES, [])
+  const client = getSupabaseClient()
+  if (!client || !navigator.onLine) {
+    return localBatches
+  }
+
+  try {
+    const { data: cloudBatches, error } = await client
+      .from('cloud_batches')
+      .select('*')
+      .order('expiry_date', { ascending: true })
+
+    if (error || !cloudBatches || cloudBatches.length === 0) {
+      return localBatches
+    }
+
+    const mappedBatches = cloudBatches.map((b) => ({
+      id: b.id,
+      medicineId: b.product_id,
+      batchNumber: b.batch_number,
+      expiryDate: b.expiry_date,
+      quantity: Number(b.quantity) || 0,
+    }))
+
+    setItem(STORAGE_KEYS.BATCHES, mappedBatches)
+    return mappedBatches
+  } catch (err) {
+    console.warn('Failed to fetch cloud batches in mobileStorage:', err)
+    return localBatches
+  }
+}
+
+/**
+ * Unified synchronization of all cloud data (products, batches, sales) from Supabase.
+ */
+export async function syncAllCloudDataIfAvailable(): Promise<{
+  medicines: any[]
+  batches: any[]
+  sales: any[]
+}> {
+  const [medicines, batches, sales] = await Promise.all([
+    fetchCloudProductsIfAvailable().catch(() => getItem<any[]>(STORAGE_KEYS.MEDICINES, [])),
+    fetchCloudBatchesIfAvailable().catch(() => getItem<any[]>(STORAGE_KEYS.BATCHES, [])),
+    fetchCloudSalesIfAvailable().catch(() => getItem<any[]>(STORAGE_KEYS.SALES, [])),
+  ])
+  return { medicines, batches, sales }
+}
+
 
 function generateId(): string {
   return Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15)
@@ -195,7 +307,7 @@ const PAYMENT_LABELS: Record<string, string> = {
 }
 
 
-// Seed initial data if empty
+// Seed initial data if empty or migrate legacy dummy data
 async function seedInitialDataIfNeeded() {
   const users = getItem(STORAGE_KEYS.USERS, [])
   if (users.length === 0) {
@@ -209,67 +321,104 @@ async function seedInitialDataIfNeeded() {
       { id: generateId(), username: 'cashier', password: cashierPassword, pin: '1234', role: 'CASHIER', createdAt: new Date().toISOString() }
     ]
     setItem(STORAGE_KEYS.USERS, initialUsers)
+  }
 
-    // Initial Categories
-    const initialCategories = [
-      { id: 'cat-1', name: 'Poultry & Chicken' },
-      { id: 'cat-2', name: 'Fish & Seafood' },
-      { id: 'cat-3', name: 'Beef & Meat' },
-      { id: 'cat-4', name: 'Turkey & Cuts' },
-      { id: 'cat-5', name: 'Pork Products' },
-      { id: 'cat-6', name: 'Processed Meat' },
-      { id: 'cat-7', name: 'Frozen Vegetables' }
-    ]
+  // Initial Categories
+  const initialCategories = [
+    { id: '79c12559-883a-41c0-aa7e-48d98ac54237', name: 'Poultry' },
+    { id: '449dec85-0565-4040-a301-2788e4b421f2', name: 'Fish & Seafood' },
+    { id: '8486b92d-d282-4193-b7b3-bb0b9df3d928', name: 'Beef & Mutton' },
+    { id: '1cccec0e-8664-41b6-a82b-ded4592e9bdc', name: 'Pork Products' },
+    { id: '69e4fb2c-f1d6-4620-9346-dc732c4e6567', name: 'Processed Meat' },
+    { id: '8fead2c2-e239-4091-9ce0-f853217a5b82', name: 'Frozen Vegetables' },
+    { id: '60441f27-2fd7-40f6-95c7-e00ba00d06f6', name: 'Dairy & Eggs' }
+  ]
+
+  // Initial Suppliers (Ghana-based cold store suppliers)
+  const initialSuppliers = [
+    { id: 'sup-1', name: 'Accra Frozen Foods Ltd', contact: '+233 30 222 4455', email: 'sales@accrafrozen.com.gh', address: 'Industrial Area, Accra, Ghana' },
+    { id: 'sup-2', name: 'Gold Coast Meat Distributors', contact: '+233 24 500 7890', email: 'orders@gcmeat.com.gh', address: 'Tema Port Area, Tema, Ghana' },
+    { id: 'sup-3', name: 'West Africa Poultry Hub', contact: '+233 54 112 3399', email: 'info@wapoultry.com.gh', address: 'Spintex Road, Accra, Ghana' }
+  ]
+
+  // Initial Customers
+  const initialCustomers = [
+    { id: 'cust-1', name: 'Kofi Mensah', phone: '0244112233' },
+    { id: 'cust-2', name: 'Ama Asante', phone: '0554321098' },
+    { id: 'cust-3', name: 'Kwame Boateng', phone: '0201987654' },
+    { id: 'cust-4', name: 'Sofiyat Yusuf', phone: '+447999007775' }
+  ]
+
+  // Initial Cold Store Products (matching SQLite and Supabase)
+  const initialMedicines = [
+    { id: '37a5d650-1524-4f59-a6dd-cbbe7ef2881b', name: 'Whole Chicken (Frozen)', genericName: 'Broiler Chicken', sku: 'SML-PTR-001', categoryId: '79c12559-883a-41c0-aa7e-48d98ac54237', categoryName: 'Poultry', price: 85, cost: 58, minStockLevel: 20 },
+    { id: 'be415fce-3c23-499c-9aa4-2621e7cd4283', name: 'Chicken Legs (5kg Pack)', genericName: 'Chicken Drumsticks', sku: 'SML-PTR-002', categoryId: '79c12559-883a-41c0-aa7e-48d98ac54237', categoryName: 'Poultry', price: 120, cost: 82, minStockLevel: 15 },
+    { id: 'e6e2c37e-2abd-4dad-b83b-48a39a6dc917', name: 'Chicken Breast (Boneless)', genericName: 'Breast Fillet', sku: 'SML-PTR-003', categoryId: '79c12559-883a-41c0-aa7e-48d98ac54237', categoryName: 'Poultry', price: 145, cost: 98, minStockLevel: 10 },
+    { id: 'ed11f170-2018-46a1-ab34-2d496834b657', name: 'Turkey (Whole Frozen)', genericName: 'Turkey Bird', sku: 'SML-PTR-004', categoryId: '79c12559-883a-41c0-aa7e-48d98ac54237', categoryName: 'Poultry', price: 320, cost: 220, minStockLevel: 5 },
+    { id: 'c270e28f-39c7-429a-afd8-fc32ad601353', name: 'Tilapia Fish (Fresh Frozen)', genericName: 'Oreochromis niloticus', sku: 'SML-FSH-001', categoryId: '449dec85-0565-4040-a301-2788e4b421f2', categoryName: 'Fish & Seafood', price: 95, cost: 62, minStockLevel: 10 },
+    { id: '92988ace-446e-462e-9dd6-a3b8ae1b174d', name: 'Mackerel (Frozen, 1kg)', genericName: 'Scomber scombrus', sku: 'SML-FSH-002', categoryId: '449dec85-0565-4040-a301-2788e4b421f2', categoryName: 'Fish & Seafood', price: 55, cost: 36, minStockLevel: 30 },
+    { id: '8dfbd3f1-5689-4cd9-8eb1-5bac0a57b041', name: 'Tiger Prawns (500g)', genericName: 'Penaeus monodon', sku: 'SML-FSH-003', categoryId: '449dec85-0565-4040-a301-2788e4b421f2', categoryName: 'Fish & Seafood', price: 180, cost: 125, minStockLevel: 10 },
+    { id: '12c42394-fe38-4abe-afc9-8f5cfc1cb59d', name: 'Squid Rings (Frozen)', genericName: 'Loligo vulgaris', sku: 'SML-FSH-004', categoryId: '449dec85-0565-4040-a301-2788e4b421f2', categoryName: 'Fish & Seafood', price: 140, cost: 95, minStockLevel: 10 },
+    { id: 'ae2508c6-2562-433a-be86-ee2628698810', name: 'Beef Chuck (1kg)', genericName: 'Bovine Chuck Cut', sku: 'SML-BEF-001', categoryId: '8486b92d-d282-4193-b7b3-bb0b9df3d928', categoryName: 'Beef & Mutton', price: 130, cost: 90, minStockLevel: 20 },
+    { id: '06b9c137-8e59-4ba0-9f6f-58566b7af925', name: 'Minced Beef (500g)', genericName: 'Ground Beef', sku: 'SML-BEF-002', categoryId: '8486b92d-d282-4193-b7b3-bb0b9df3d928', categoryName: 'Beef & Mutton', price: 70, cost: 48, minStockLevel: 25 },
+    { id: 'ad058b73-91ce-4fe3-aaf1-817df616b081', name: 'Mutton Leg (Frozen)', genericName: 'Ovine Leg Cut', sku: 'SML-MTN-001', categoryId: '8486b92d-d282-4193-b7b3-bb0b9df3d928', categoryName: 'Beef & Mutton', price: 200, cost: 140, minStockLevel: 10 },
+    { id: 'c6686721-6530-49e9-add5-d41215bb2004', name: 'Oxtail (Frozen, 1kg)', genericName: 'Bovine Tail', sku: 'SML-BEF-003', categoryId: '8486b92d-d282-4193-b7b3-bb0b9df3d928', categoryName: 'Beef & Mutton', price: 155, cost: 105, minStockLevel: 10 },
+    { id: 'bc239d26-9828-462b-b0b1-55aa836ad379', name: 'Pork Ribs (Frozen)', genericName: 'Porcine Ribs', sku: 'SML-PRK-001', categoryId: '1cccec0e-8664-41b6-a82b-ded4592e9bdc', categoryName: 'Pork Products', price: 110, cost: 75, minStockLevel: 15 },
+    { id: '622fcf37-ee76-42a0-8350-7e0ea6564981', name: 'Chicken wings (1kg)', genericName: 'Chicken Foods', sku: 'SML-CHK-002', categoryId: '79c12559-883a-41c0-aa7e-48d98ac54237', categoryName: 'Poultry', price: 100, cost: 68, minStockLevel: 12 },
+    { id: 'bf64f1fd-6841-4009-b8db-244ed8c9cdda', name: 'Beef Sausages (500g)', genericName: 'Processed Beef Sausage', sku: 'SML-PRC-001', categoryId: '69e4fb2c-f1d6-4620-9346-dc732c4e6567', categoryName: 'Processed Meat', price: 65, cost: 42, minStockLevel: 20 },
+    { id: 'eeae3fed-ba46-448a-95c4-487fefb519b9', name: 'Chicken Hot Dogs (300g)', genericName: 'Processed Chicken Frankfurter', sku: 'SML-PRC-002', categoryId: '69e4fb2c-f1d6-4620-9346-dc732c4e6567', categoryName: 'Processed Meat', price: 45, cost: 28, minStockLevel: 20 },
+    { id: 'bde469d3-2a18-4c61-9b23-c1275fb48fff', name: 'Smoked Bacon Strips', genericName: 'Cured Pork Bacon', sku: 'SML-PRC-003', categoryId: '69e4fb2c-f1d6-4620-9346-dc732c4e6567', categoryName: 'Processed Meat', price: 90, cost: 60, minStockLevel: 15 },
+    { id: '13519c67-df8f-454a-8656-82d30d803090', name: 'Mixed Vegetables (1kg)', genericName: 'Frozen Mixed Veg', sku: 'SML-VEG-001', categoryId: '8fead2c2-e239-4091-9ce0-f853217a5b82', categoryName: 'Frozen Vegetables', price: 30, cost: 18, minStockLevel: 30 },
+    { id: 'd35aa4e9-cdf7-47b4-9bd3-ab22559f55e1', name: 'Green Beans (Frozen)', genericName: 'Phaseolus vulgaris', sku: 'SML-VEG-002', categoryId: '8fead2c2-e239-4091-9ce0-f853217a5b82', categoryName: 'Frozen Vegetables', price: 25, cost: 14, minStockLevel: 25 },
+    { id: 'a0dcb2d1-3530-43f1-8722-9c4f02008ada', name: 'Unsalted Butter (250g)', genericName: 'Dairy Butter', sku: 'SML-DRY-001', categoryId: '60441f27-2fd7-40f6-95c7-e00ba00d06f6', categoryName: 'Dairy & Eggs', price: 40, cost: 26, minStockLevel: 20 },
+    { id: '972d4193-08eb-4f8a-8d58-131446008150', name: 'Crate of Eggs (30 pcs)', genericName: 'Chicken Eggs', sku: 'SML-DRY-002', categoryId: '60441f27-2fd7-40f6-95c7-e00ba00d06f6', categoryName: 'Dairy & Eggs', price: 55, cost: 38, minStockLevel: 15 },
+    { id: '2341b5e9-f531-4cfc-9240-824e1b4c77dc', name: 'Aspirin', genericName: 'Tyson', sku: '9846569838', categoryId: '449dec85-0565-4040-a301-2788e4b421f2', categoryName: 'Fish & Seafood', price: 80, cost: 50, minStockLevel: 10 }
+  ]
+
+  // Initial Batches
+  const initialBatches = [
+    { id: '625bc9ae-9c02-4204-8801-328742f16848', medicineId: '37a5d650-1524-4f59-a6dd-cbbe7ef2881b', batchNumber: 'CHK-2024-001', expiryDate: '2027-09-20T14:30:13.686Z', quantity: 79 },
+    { id: 'e0cc86cb-6a6b-4410-bbe5-84b7ad2f7388', medicineId: 'be415fce-3c23-499c-9aa4-2621e7cd4283', batchNumber: 'CHL-2024-001', expiryDate: '2027-09-20T14:30:13.686Z', quantity: 60 },
+    { id: '87a2d385-2fb7-4807-8b08-3f86187b7718', medicineId: 'e6e2c37e-2abd-4dad-b83b-48a39a6dc917', batchNumber: 'CHB-2024-001', expiryDate: '2027-09-20T14:30:13.686Z', quantity: 49 },
+    { id: '694fc776-f0ba-4829-80e9-43446738b3f9', medicineId: 'ed11f170-2018-46a1-ab34-2d496834b657', batchNumber: 'TKY-2024-001', expiryDate: '2027-09-20T14:30:13.686Z', quantity: 18 },
+    { id: '4c1b2483-1696-41fa-b0d0-a08daf1fc45d', medicineId: 'c270e28f-39c7-429a-afd8-fc32ad601353', batchNumber: 'TLP-2024-001', expiryDate: '2026-10-10T14:30:13.686Z', quantity: 9 },
+    { id: '22b0b3ba-b343-4ac4-9b8f-dd059d24ddc3', medicineId: 'c270e28f-39c7-429a-afd8-fc32ad601353', batchNumber: 'TLP-2024-002', expiryDate: '2027-09-20T14:30:13.686Z', quantity: 90 },
+    { id: '63712642-3d27-4eff-99fd-a9912ad8dcf2', medicineId: '92988ace-446e-462e-9dd6-a3b8ae1b174d', batchNumber: 'MCK-2024-001', expiryDate: '2027-09-20T14:30:13.686Z', quantity: 119 },
+    { id: 'dbc6c387-c759-4b94-9e24-c2263b077c78', medicineId: '8dfbd3f1-5689-4cd9-8eb1-5bac0a57b041', batchNumber: 'PRW-2024-001', expiryDate: '2027-09-20T14:30:13.686Z', quantity: 39 },
+    { id: '73b485c3-9b90-4362-87d3-68a163b9e87c', medicineId: '12c42394-fe38-4abe-afc9-8f5cfc1cb59d', batchNumber: 'SQD-2024-001', expiryDate: '2027-09-20T14:30:13.686Z', quantity: 35 },
+    { id: 'f026e640-95f4-449f-8f53-1713350e6026', medicineId: 'ae2508c6-2562-433a-be86-ee2628698810', batchNumber: 'BFC-2024-001', expiryDate: '2027-09-20T14:30:13.686Z', quantity: 75 },
+    { id: '5c142866-fff8-4420-8606-a4ab9dc8a625', medicineId: '06b9c137-8e59-4ba0-9f6f-58566b7af925', batchNumber: 'BFM-2024-001', expiryDate: '2027-09-20T14:30:13.686Z', quantity: 99 },
+    { id: '7454a04e-c3a8-4acb-b49e-f5c636bf8467', medicineId: 'ad058b73-91ce-4fe3-aaf1-817df616b081', batchNumber: 'MTN-2024-001', expiryDate: '2027-09-20T14:30:13.686Z', quantity: 30 },
+    { id: 'dcca192d-544e-4c8f-b47d-48fde1784ad0', medicineId: 'c6686721-6530-49e9-add5-d41215bb2004', batchNumber: 'OXT-2024-001', expiryDate: '2026-08-20T14:30:13.686Z', quantity: 5 },
+    { id: 'dcb09924-f3ff-4293-b943-6f5c109da8f1', medicineId: 'c6686721-6530-49e9-add5-d41215bb2004', batchNumber: 'OXT-2024-002', expiryDate: '2027-09-20T14:30:13.686Z', quantity: 45 },
+    { id: '5c91a840-6a7a-4973-88a2-7caa2229b0be', medicineId: 'bc239d26-9828-462b-b0b1-55aa836ad379', batchNumber: 'PRK-2024-001', expiryDate: '2027-09-20T14:30:13.686Z', quantity: 55 },
+    { id: '512c7098-79ba-4ecb-ab2c-efc213b3e1ff', medicineId: '622fcf37-ee76-42a0-8350-7e0ea6564981', batchNumber: 'PKB-2024-001', expiryDate: '2027-09-20T14:30:13.686Z', quantity: 48 },
+    { id: '3fa036a5-a99c-456c-924e-0986e467d630', medicineId: 'bf64f1fd-6841-4009-b8db-244ed8c9cdda', batchNumber: 'BSG-2024-001', expiryDate: '2028-09-20T14:30:13.686Z', quantity: 90 },
+    { id: 'fce193a5-56c1-4d1e-9c8f-4d28502d27df', medicineId: 'eeae3fed-ba46-448a-95c4-487fefb519b9', batchNumber: 'CHD-2024-001', expiryDate: '2028-09-20T14:30:13.686Z', quantity: 110 },
+    { id: '558d92a9-69ba-4197-80f6-7ab28dcb1970', medicineId: 'bde469d3-2a18-4c61-9b23-c1275fb48fff', batchNumber: 'BCN-2024-001', expiryDate: '2028-09-20T14:30:13.686Z', quantity: 70 },
+    { id: 'b7fb0cd8-67cf-4d46-9925-bf6586f132c9', medicineId: '13519c67-df8f-454a-8656-82d30d803090', batchNumber: 'MVG-2024-001', expiryDate: '2028-09-20T14:30:13.686Z', quantity: 150 },
+    { id: 'f4f6449d-dbb7-4d9d-8b02-4389f608147a', medicineId: 'd35aa4e9-cdf7-47b4-9bd3-ab22559f55e1', batchNumber: 'GBN-2024-001', expiryDate: '2028-09-20T14:30:13.686Z', quantity: 120 },
+    { id: '8ad8fb5b-10b2-4982-b2f0-0bab097ae3d3', medicineId: 'a0dcb2d1-3530-43f1-8722-9c4f02008ada', batchNumber: 'BTR-2024-001', expiryDate: '2027-09-20T14:30:13.686Z', quantity: 80 },
+    { id: 'c15fb55a-944c-4bb8-a74e-c393cfebd804', medicineId: '972d4193-08eb-4f8a-8d58-131446008150', batchNumber: 'EGG-2024-001', expiryDate: '2026-10-10T14:30:13.686Z', quantity: 8 },
+    { id: '36b081bf-2bd0-4b30-9e27-558b7960d12a', medicineId: '972d4193-08eb-4f8a-8d58-131446008150', batchNumber: 'EGG-2024-002', expiryDate: '2027-09-20T14:30:13.686Z', quantity: 50 },
+    { id: 'e5f60ae1-d756-4da5-b7ab-d2b78e85db4a', medicineId: 'c270e28f-39c7-429a-afd8-fc32ad601353', batchNumber: 'Tyuryr', expiryDate: '2027-03-19T00:00:00.000Z', quantity: 12 },
+    { id: 'ddd7b772-e061-4bd4-b28f-fa485d5b73e0', medicineId: '2341b5e9-f531-4cfc-9240-824e1b4c77dc', batchNumber: 'GAT-587575', expiryDate: '2028-06-22T00:00:00.000Z', quantity: 8 }
+  ]
+
+  // Check if current stored medicines are empty or contain obsolete dummy items
+  const currentMeds = getItem<any[]>(STORAGE_KEYS.MEDICINES, [])
+  const hasLegacyDummy = currentMeds.some(m => m.id === 'med-1' || m.id === 'med-2' || m.id === 'med-3')
+  if (currentMeds.length === 0 || hasLegacyDummy) {
     setItem(STORAGE_KEYS.CATEGORIES, initialCategories)
-
-    // Initial Suppliers (Ghana-based cold store suppliers)
-    const initialSuppliers = [
-      { id: 'sup-1', name: 'Accra Frozen Foods Ltd', contact: '+233 30 222 4455', email: 'sales@accrafrozen.com.gh', address: 'Industrial Area, Accra, Ghana' },
-      { id: 'sup-2', name: 'Gold Coast Meat Distributors', contact: '+233 24 500 7890', email: 'orders@gcmeat.com.gh', address: 'Tema Port Area, Tema, Ghana' },
-      { id: 'sup-3', name: 'West Africa Poultry Hub', contact: '+233 54 112 3399', email: 'info@wapoultry.com.gh', address: 'Spintex Road, Accra, Ghana' }
-    ]
     setItem(STORAGE_KEYS.SUPPLIERS, initialSuppliers)
-
-    // Initial Customers
-    const initialCustomers = [
-      { id: 'cust-1', name: 'Kofi Mensah', phone: '0244112233' },
-      { id: 'cust-2', name: 'Ama Asante', phone: '0554321098' },
-      { id: 'cust-3', name: 'Kwame Boateng', phone: '0201987654' },
-      { id: 'cust-4', name: 'Sofiyat Yusuf', phone: '+447999007775' }
-    ]
     setItem(STORAGE_KEYS.CUSTOMERS, initialCustomers)
-
-    // Initial Cold Store Products (using medicine schema)
-    const initialMedicines = [
-      { id: 'med-1', name: 'Whole Chicken (Frozen)', genericName: 'Broiler Chicken', sku: 'SML-PTR-001', categoryId: 'cat-1', price: 85.00, cost: 58.00, minStockLevel: 20 },
-      { id: 'med-2', name: 'Chicken Legs (5kg Pack)', genericName: 'Chicken Drumsticks', sku: 'SML-PTR-002', categoryId: 'cat-1', price: 120.00, cost: 82.00, minStockLevel: 15 },
-      { id: 'med-3', name: 'Chicken Breast (Boneless)', genericName: 'Breast Fillet', sku: 'SML-PTR-003', categoryId: 'cat-1', price: 145.00, cost: 98.00, minStockLevel: 10 },
-      { id: 'med-4', name: 'Turkey (Whole Frozen)', genericName: 'Turkey Bird', sku: 'SML-PTR-004', categoryId: 'cat-4', price: 320.00, cost: 220.00, minStockLevel: 5 },
-      { id: 'med-5', name: 'Tilapia Fish (Fresh Frozen)', genericName: 'Fresh Water Tilapia', sku: 'SML-FSH-001', categoryId: 'cat-2', price: 95.00, cost: 62.00, minStockLevel: 25 },
-      { id: 'med-6', name: 'Mackerel (Frozen, 1kg)', genericName: 'Titus / Horse Mackerel', sku: 'SML-FSH-002', categoryId: 'cat-2', price: 55.00, cost: 36.00, minStockLevel: 30 },
-      { id: 'med-7', name: 'Tiger Prawns (500g)', genericName: 'Penaeus monodon', sku: 'SML-FSH-003', categoryId: 'cat-2', price: 180.00, cost: 125.00, minStockLevel: 10 },
-      { id: 'med-8', name: 'Boneless Beef Box (15kg)', genericName: 'Prime Beef', sku: 'SML-BEEF-001', categoryId: 'cat-3', price: 420.00, cost: 310.00, minStockLevel: 5 },
-      { id: 'med-9', name: 'Farmstyle French Fries (2.5kg)', genericName: 'Grade A Fries', sku: 'SML-VEG-001', categoryId: 'cat-7', price: 65.00, cost: 42.00, minStockLevel: 15 }
-    ]
     setItem(STORAGE_KEYS.MEDICINES, initialMedicines)
-
-    // Initial Batches
-    const futureDate = new Date()
-    futureDate.setFullYear(futureDate.getFullYear() + 1)
-    const initialBatches = [
-      { id: 'batch-1', medicineId: 'med-1', batchNumber: 'CHK-2024-001', expiryDate: futureDate.toISOString(), quantity: 80 },
-      { id: 'batch-2', medicineId: 'med-2', batchNumber: 'CHL-2024-001', expiryDate: futureDate.toISOString(), quantity: 60 },
-      { id: 'batch-3', medicineId: 'med-3', batchNumber: 'CHB-2024-001', expiryDate: futureDate.toISOString(), quantity: 50 },
-      { id: 'batch-4', medicineId: 'med-4', batchNumber: 'TKY-2024-001', expiryDate: futureDate.toISOString(), quantity: 20 },
-      { id: 'batch-5', medicineId: 'med-5', batchNumber: 'TLP-2024-001', expiryDate: futureDate.toISOString(), quantity: 90 },
-      { id: 'batch-6', medicineId: 'med-6', batchNumber: 'MCK-2024-001', expiryDate: futureDate.toISOString(), quantity: 120 },
-      { id: 'batch-7', medicineId: 'med-7', batchNumber: 'PRW-2024-001', expiryDate: futureDate.toISOString(), quantity: 40 },
-      { id: 'batch-8', medicineId: 'med-8', batchNumber: 'BEF-2024-001', expiryDate: futureDate.toISOString(), quantity: 25 },
-      { id: 'batch-9', medicineId: 'med-9', batchNumber: 'FRY-2024-001', expiryDate: futureDate.toISOString(), quantity: 45 }
-    ]
     setItem(STORAGE_KEYS.BATCHES, initialBatches)
+  }
 
-    // Initial Settings
+  // Initial Settings
+  const currentSettings = getItem(STORAGE_KEYS.SETTINGS, null)
+  if (!currentSettings) {
     setItem(STORAGE_KEYS.SETTINGS, {
       'biz.name': 'SML Legacy Limited',
       'biz.type': 'Cold store',
@@ -292,6 +441,7 @@ async function seedInitialDataIfNeeded() {
     })
   }
 }
+
 
 // Initialize seed on module load
 seedInitialDataIfNeeded()
@@ -337,9 +487,7 @@ export const mobileApi = {
 
   // Dashboard Stats
   getDashboardStats: async () => {
-    const sales = await fetchCloudSalesIfAvailable()
-    const medicines = getItem<any[]>(STORAGE_KEYS.MEDICINES, [])
-    const batches = getItem<any[]>(STORAGE_KEYS.BATCHES, [])
+    const { sales, medicines, batches } = await syncAllCloudDataIfAvailable()
     const purchases = getItem<any[]>(STORAGE_KEYS.PURCHASES, [])
     const customers = getItem<any[]>(STORAGE_KEYS.CUSTOMERS, [])
 
@@ -523,7 +671,10 @@ export const mobileApi = {
   },
 
   // Categories
-  getCategories: async () => getItem<any[]>(STORAGE_KEYS.CATEGORIES, []),
+  getCategories: async () => {
+    await fetchCloudProductsIfAvailable().catch(() => {})
+    return getItem<any[]>(STORAGE_KEYS.CATEGORIES, [])
+  },
   createCategory: async (data: { name: string }) => {
     const list = getItem<any[]>(STORAGE_KEYS.CATEGORIES, [])
     const newItem = { id: generateId(), ...data }
@@ -549,31 +700,82 @@ export const mobileApi = {
 
   // Medicines
   getMedicines: async () => {
-    const medicines = getItem<any[]>(STORAGE_KEYS.MEDICINES, [])
+    const medicines = await fetchCloudProductsIfAvailable()
     const categories = getItem<any[]>(STORAGE_KEYS.CATEGORIES, [])
     const batches = getItem<any[]>(STORAGE_KEYS.BATCHES, [])
 
-    return medicines.map(m => ({
-      ...m,
-      category: categories.find(c => c.id === m.categoryId),
-      batches: batches.filter(b => b.medicineId === m.id)
-    }))
+    return medicines.map(m => {
+      const medBatches = batches.filter(b => b.medicineId === m.id)
+      const calculatedStock = medBatches.reduce((acc, b) => acc + (Number(b.quantity) || 0), 0)
+      return {
+        ...m,
+        stockQuantity: calculatedStock > 0 ? calculatedStock : (m.stockQuantity || 0),
+        category: categories.find(c => c.id === m.categoryId) || { id: m.categoryId, name: m.categoryName || 'General' },
+        batches: medBatches
+      }
+    })
   },
   createMedicine: async (data: any) => {
     const medicines = getItem<any[]>(STORAGE_KEYS.MEDICINES, [])
-    const newMed = { id: generateId(), ...data }
+    const categories = getItem<any[]>(STORAGE_KEYS.CATEGORIES, [])
+    const cat = categories.find(c => c.id === data.categoryId)
+    const newMed = {
+      id: generateId(),
+      ...data,
+      categoryName: cat?.name || data.categoryName || 'General'
+    }
     medicines.push(newMed)
     setItem(STORAGE_KEYS.MEDICINES, medicines)
     enqueueSyncItem('PRODUCT', 'INSERT', newMed)
+
+    const client = getSupabaseClient()
+    if (client && navigator.onLine) {
+      client.from('cloud_products').upsert({
+        id: newMed.id,
+        store_id: 'sml_accra_main',
+        name: newMed.name,
+        generic_name: newMed.genericName || null,
+        sku: newMed.sku,
+        category_name: newMed.categoryName,
+        price: Number(newMed.price) || 0,
+        cost: Number(newMed.cost) || 0,
+        stock_quantity: Number(newMed.stockQuantity) || 0,
+        min_stock_level: Number(newMed.minStockLevel) || 10,
+        updated_at: new Date().toISOString()
+      }).then(() => {}).catch(() => {})
+    }
     return newMed
   },
   updateMedicine: async (id: string, data: any) => {
     const medicines = getItem<any[]>(STORAGE_KEYS.MEDICINES, [])
+    const categories = getItem<any[]>(STORAGE_KEYS.CATEGORIES, [])
     const idx = medicines.findIndex(m => m.id === id)
     if (idx !== -1) {
-      medicines[idx] = { ...medicines[idx], ...data }
+      const cat = categories.find(c => c.id === data.categoryId) || categories.find(c => c.id === medicines[idx].categoryId)
+      medicines[idx] = {
+        ...medicines[idx],
+        ...data,
+        categoryName: cat?.name || data.categoryName || medicines[idx].categoryName || 'General'
+      }
       setItem(STORAGE_KEYS.MEDICINES, medicines)
       enqueueSyncItem('PRODUCT', 'UPDATE', medicines[idx])
+
+      const client = getSupabaseClient()
+      if (client && navigator.onLine) {
+        client.from('cloud_products').upsert({
+          id: medicines[idx].id,
+          store_id: 'sml_accra_main',
+          name: medicines[idx].name,
+          generic_name: medicines[idx].genericName || null,
+          sku: medicines[idx].sku,
+          category_name: medicines[idx].categoryName,
+          price: Number(medicines[idx].price) || 0,
+          cost: Number(medicines[idx].cost) || 0,
+          stock_quantity: Number(medicines[idx].stockQuantity) || 0,
+          min_stock_level: Number(medicines[idx].minStockLevel) || 10,
+          updated_at: new Date().toISOString()
+        }).then(() => {}).catch(() => {})
+      }
       return medicines[idx]
     }
     throw new Error('Medicine not found')
@@ -584,11 +786,17 @@ export const mobileApi = {
     setItem(STORAGE_KEYS.MEDICINES, medicines.filter(m => m.id !== id))
     setItem(STORAGE_KEYS.BATCHES, batches.filter(b => b.medicineId !== id))
     enqueueSyncItem('PRODUCT', 'DELETE', { id })
+
+    const client = getSupabaseClient()
+    if (client && navigator.onLine) {
+      client.from('cloud_products').delete().eq('id', id).then(() => {}).catch(() => {})
+      client.from('cloud_batches').delete().eq('product_id', id).then(() => {}).catch(() => {})
+    }
   },
 
   // Batches
   getBatches: async (startDate?: string, endDate?: string) => {
-    let batches = getItem<any[]>(STORAGE_KEYS.BATCHES, [])
+    let batches = await fetchCloudBatchesIfAvailable()
     const medicines = getItem<any[]>(STORAGE_KEYS.MEDICINES, [])
 
     if (startDate) {
@@ -608,6 +816,19 @@ export const mobileApi = {
     const newBatch = { id: generateId(), ...data }
     batches.push(newBatch)
     setItem(STORAGE_KEYS.BATCHES, batches)
+    enqueueSyncItem('BATCH', 'INSERT', newBatch)
+
+    const client = getSupabaseClient()
+    if (client && navigator.onLine) {
+      client.from('cloud_batches').upsert({
+        id: newBatch.id,
+        product_id: newBatch.medicineId,
+        batch_number: newBatch.batchNumber,
+        expiry_date: newBatch.expiryDate,
+        quantity: Number(newBatch.quantity) || 0,
+        updated_at: new Date().toISOString()
+      }).then(() => {}).catch(() => {})
+    }
     return newBatch
   },
   updateBatch: async (id: string, data: any) => {
@@ -616,6 +837,19 @@ export const mobileApi = {
     if (idx !== -1) {
       batches[idx] = { ...batches[idx], ...data }
       setItem(STORAGE_KEYS.BATCHES, batches)
+      enqueueSyncItem('BATCH', 'UPDATE', batches[idx])
+
+      const client = getSupabaseClient()
+      if (client && navigator.onLine) {
+        client.from('cloud_batches').upsert({
+          id: batches[idx].id,
+          product_id: batches[idx].medicineId,
+          batch_number: batches[idx].batchNumber,
+          expiry_date: batches[idx].expiryDate,
+          quantity: Number(batches[idx].quantity) || 0,
+          updated_at: new Date().toISOString()
+        }).then(() => {}).catch(() => {})
+      }
       return batches[idx]
     }
     throw new Error('Batch not found')
@@ -623,6 +857,11 @@ export const mobileApi = {
   deleteBatch: async (id: string) => {
     const batches = getItem<any[]>(STORAGE_KEYS.BATCHES, [])
     setItem(STORAGE_KEYS.BATCHES, batches.filter(b => b.id !== id))
+
+    const client = getSupabaseClient()
+    if (client && navigator.onLine) {
+      client.from('cloud_batches').delete().eq('id', id).then(() => {}).catch(() => {})
+    }
   },
 
   // Suppliers
@@ -684,6 +923,8 @@ export const mobileApi = {
   }) => {
     const sales = getItem<any[]>(STORAGE_KEYS.SALES, [])
     const batches = getItem<any[]>(STORAGE_KEYS.BATCHES, [])
+    const medicines = getItem<any[]>(STORAGE_KEYS.MEDICINES, [])
+    const customers = getItem<any[]>(STORAGE_KEYS.CUSTOMERS, [])
     const prescriptions = getItem<any[]>(STORAGE_KEYS.PRESCRIPTIONS, [])
 
     const saleId = generateId()
@@ -709,18 +950,81 @@ export const mobileApi = {
       ? 'SPLIT'
       : (data.payments?.[0]?.method || data.paymentMethod || 'CASH')
 
+    const customerObj = customers.find(c => c.id === data.customerId)
+
     const newSale = {
       id: saleId,
       customerId: data.customerId || null,
+      customerName: customerObj?.name || 'Walk-in Customer',
       paymentMethod: primaryPaymentMethod,
       payments: paymentRecords,
       total: finalTotal,
       date: new Date().toISOString(),
-      items: data.items.map(item => ({ id: generateId(), saleId, ...item }))
+      cashier: 'cashier',
+      items: data.items.map(item => {
+        const batch = batches.find(b => b.id === item.batchId)
+        const med = medicines.find(m => m.id === batch?.medicineId)
+        return {
+          id: generateId(),
+          saleId,
+          batchId: item.batchId,
+          medicineId: med?.id || batch?.medicineId || item.batchId,
+          name: med?.name || 'Cold Store Item',
+          quantity: item.quantity,
+          price: item.price,
+          cost: med?.cost || 0,
+          medicine: med || {
+            id: item.batchId,
+            name: 'Cold Store Item',
+            price: item.price,
+            cost: 0
+          }
+        }
+      })
     }
-    sales.push(newSale)
+    sales.unshift(newSale)
     setItem(STORAGE_KEYS.SALES, sales)
     enqueueSyncItem('SALE', 'INSERT', newSale)
+
+    // Direct push to Supabase if online
+    const client = getSupabaseClient()
+    if (client && navigator.onLine) {
+      client.from('cloud_sales').upsert({
+        id: newSale.id,
+        store_id: 'sml_accra_main',
+        sale_number: `INV-${newSale.id.slice(0, 8).toUpperCase()}`,
+        customer_name: newSale.customerName,
+        total: newSale.total,
+        payment_method: newSale.paymentMethod,
+        cashier_username: 'cashier',
+        date: newSale.date,
+        synced_at: new Date().toISOString()
+      }).then(() => {
+        const cloudItems = newSale.items.map((i: any) => ({
+          id: i.id,
+          sale_id: newSale.id,
+          product_id: i.medicineId,
+          product_name: i.name,
+          sku: i.medicine?.sku || null,
+          quantity: i.quantity,
+          unit_price: i.price,
+          unit_cost: i.cost,
+          subtotal: i.quantity * i.price
+        }))
+        return client.from('cloud_sale_items').upsert(cloudItems)
+      }).catch((e) => console.warn('Direct cloud sale push error:', e))
+
+      // Also push deducted batch quantities to cloud_batches
+      for (const item of data.items) {
+        const updatedBatch = batches.find(b => b.id === item.batchId)
+        if (updatedBatch) {
+          client.from('cloud_batches').update({
+            quantity: updatedBatch.quantity,
+            updated_at: new Date().toISOString()
+          }).eq('id', updatedBatch.id).then(() => {}).catch(() => {})
+        }
+      }
+    }
 
     if (data.prescription && data.customerId) {
       const newPrescription = {
@@ -821,10 +1125,8 @@ export const mobileApi = {
     const prevStart = new Date(prevEnd.getTime() - periodMs)
     prevStart.setHours(0, 0, 0, 0)
 
-    const allSales = await fetchCloudSalesIfAvailable()
+    const { sales: allSales, medicines: allMedicines, batches: allBatches } = await syncAllCloudDataIfAvailable()
     const allPurchases = getItem<any[]>(STORAGE_KEYS.PURCHASES, [])
-    const allBatches = getItem<any[]>(STORAGE_KEYS.BATCHES, [])
-    const allMedicines = getItem<any[]>(STORAGE_KEYS.MEDICINES, [])
     const allCustomers = getItem<any[]>(STORAGE_KEYS.CUSTOMERS, [])
     const allSuppliers = getItem<any[]>(STORAGE_KEYS.SUPPLIERS, [])
 

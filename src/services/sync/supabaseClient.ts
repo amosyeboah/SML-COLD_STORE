@@ -190,3 +190,70 @@ export function subscribeToCloudSales(onUpdate: (payload: any) => void): () => v
     return () => {}
   }
 }
+
+/**
+ * Realtime subscription to cloud_products table.
+ * Automatically notifies when products catalog or stock is modified in Supabase.
+ */
+export function subscribeToCloudProducts(onUpdate: (payload: any) => void): () => void {
+  const client = getSupabaseClient()
+  if (!client) return () => {}
+
+  try {
+    const channel = client
+      .channel('cloud_products_realtime')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'cloud_products' },
+        (payload) => {
+          onUpdate(payload)
+        }
+      )
+      .subscribe((status) => {
+        if (status === 'SUBSCRIBED') {
+          console.log('📡 [Supabase Realtime] Connected to cloud_products stream')
+        }
+      })
+
+    return () => {
+      client.removeChannel(channel)
+    }
+  } catch (err) {
+    console.warn('📡 [Supabase Realtime] Products subscription error:', err)
+    return () => {}
+  }
+}
+
+/**
+ * Realtime subscription to cloud_batches table.
+ * Automatically notifies when batches are received or modified in Supabase.
+ */
+export function subscribeToCloudBatches(onUpdate: (payload: any) => void): () => void {
+  const client = getSupabaseClient()
+  if (!client) return () => {}
+
+  try {
+    const channel = client
+      .channel('cloud_batches_realtime')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'cloud_batches' },
+        (payload) => {
+          onUpdate(payload)
+        }
+      )
+      .subscribe((status) => {
+        if (status === 'SUBSCRIBED') {
+          console.log('📡 [Supabase Realtime] Connected to cloud_batches stream')
+        }
+      })
+
+    return () => {
+      client.removeChannel(channel)
+    }
+  } catch (err) {
+    console.warn('📡 [Supabase Realtime] Batches subscription error:', err)
+    return () => {}
+  }
+}
+

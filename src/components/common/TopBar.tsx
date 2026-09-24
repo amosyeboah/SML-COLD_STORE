@@ -7,7 +7,7 @@ import { Dialog, DialogContent } from '@/components/ui/dialog'
 import { useQuery } from '@tanstack/react-query'
 import { cn } from '@/utils'
 import { subscribeToSyncState, reconcileAllSalesWithCloud } from '@/services/sync/syncQueue'
-import { fetchCloudSalesIfAvailable } from '@/services/api/mobileStorage'
+import { fetchCloudSalesIfAvailable, syncAllCloudDataIfAvailable } from '@/services/api/mobileStorage'
 import { queryClient } from '@/lib/queryClient'
 
 const greetingText = () => {
@@ -81,7 +81,7 @@ export default function TopBar() {
     setSyncSuccessMsg(null)
     try {
       const res = await reconcileAllSalesWithCloud()
-      await fetchCloudSalesIfAvailable().catch(() => {})
+      await syncAllCloudDataIfAvailable().catch(() => {})
       queryClient.invalidateQueries({ queryKey: ['dashboard-stats'] })
       queryClient.invalidateQueries({ queryKey: ['reports'] })
       queryClient.invalidateQueries({ queryKey: ['batches'] })

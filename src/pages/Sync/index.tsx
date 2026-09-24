@@ -36,7 +36,7 @@ import {
   SyncQueueItem,
   SyncSessionLog,
 } from '@/services/sync/syncQueue'
-import { fetchCloudSalesIfAvailable } from '@/services/api/mobileStorage'
+import { fetchCloudSalesIfAvailable, syncAllCloudDataIfAvailable } from '@/services/api/mobileStorage'
 import { queryClient } from '@/lib/queryClient'
 
 export default function SyncPage() {
@@ -101,7 +101,7 @@ export default function SyncPage() {
     setIsSyncing(true)
     try {
       const res = await reconcileAllSalesWithCloud()
-      await fetchCloudSalesIfAvailable().catch(() => {})
+      await syncAllCloudDataIfAvailable().catch(() => {})
       queryClient.invalidateQueries({ queryKey: ['dashboard-stats'] })
       queryClient.invalidateQueries({ queryKey: ['reports'] })
       queryClient.invalidateQueries({ queryKey: ['batches'] })
