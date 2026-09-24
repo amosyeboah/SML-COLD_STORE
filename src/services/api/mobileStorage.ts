@@ -1,34 +1,59 @@
+import bcrypt from 'bcryptjs'
 import { enqueueSyncItem } from '../sync/syncQueue'
 import { getSupabaseClient } from '../sync/supabaseClient'
 
-// Browser-compatible password hashing using Web Crypto API (no Node.js deps)
+// Browser & Electron compatible password hashing
 async function hashPassword(password: string): Promise<string> {
-  const enc = new TextEncoder()
-  const salt = crypto.getRandomValues(new Uint8Array(16))
-  const keyMaterial = await crypto.subtle.importKey('raw', enc.encode(password), 'PBKDF2', false, ['deriveBits'])
-  const bits = await crypto.subtle.deriveBits(
-    { name: 'PBKDF2', salt, iterations: 100000, hash: 'SHA-256' },
-    keyMaterial,
-    256
-  )
-  const saltHex = Array.from(salt).map(b => b.toString(16).padStart(2, '0')).join('')
-  const hashHex = Array.from(new Uint8Array(bits)).map(b => b.toString(16).padStart(2, '0')).join('')
-  return `webcrypto:${saltHex}:${hashHex}`
+  try {
+    return bcrypt.hashSync(password, 10)
+  } catch {
+    const enc = new TextEncoder()
+    const salt = crypto.getRandomValues(new Uint8Array(16))
+    const keyMaterial = await crypto.subtle.importKey('raw', enc.encode(password), 'PBKDF2', false, ['deriveBits'])
+    const bits = await crypto.subtle.deriveBits(
+      { name: 'PBKDF2', salt, iterations: 100000, hash: 'SHA-256' },
+      keyMaterial,
+      256
+    )
+    const saltHex = Array.from(salt).map(b => b.toString(16).padStart(2, '0')).join('')
+    const hashHex = Array.from(new Uint8Array(bits)).map(b => b.toString(16).padStart(2, '0')).join('')
+    return `webcrypto:${saltHex}:${hashHex}`
+  }
 }
 
 async function verifyPassword(password: string, stored: string): Promise<boolean> {
-  if (!stored.startsWith('webcrypto:')) return false
-  const [, saltHex, hashHex] = stored.split(':')
-  const salt = new Uint8Array(saltHex.match(/.{2}/g)!.map(h => parseInt(h, 16)))
-  const enc = new TextEncoder()
-  const keyMaterial = await crypto.subtle.importKey('raw', enc.encode(password), 'PBKDF2', false, ['deriveBits'])
-  const bits = await crypto.subtle.deriveBits(
-    { name: 'PBKDF2', salt, iterations: 100000, hash: 'SHA-256' },
-    keyMaterial,
-    256
-  )
-  const candidateHex = Array.from(new Uint8Array(bits)).map(b => b.toString(16).padStart(2, '0')).join('')
-  return candidateHex === hashHex
+  if (!stored) return false
+
+  // 1. Check bcrypt hash ($2a$, $2b$, $2y$)
+  if (stored.startsWith('$2a$') || stored.startsWith('$2b$') || stored.startsWith('$2y$')) {
+    try {
+      return bcrypt.compareSync(password, stored)
+    } catch {
+      // fallback
+    }
+  }
+
+  // 2. Check PBKDF2 Web Crypto format
+  if (stored.startsWith('webcrypto:')) {
+    try {
+      const [, saltHex, hashHex] = stored.split(':')
+      const salt = new Uint8Array(saltHex.match(/.{2}/g)!.map(h => parseInt(h, 16)))
+      const enc = new TextEncoder()
+      const keyMaterial = await crypto.subtle.importKey('raw', enc.encode(password), 'PBKDF2', false, ['deriveBits'])
+      const bits = await crypto.subtle.deriveBits(
+        { name: 'PBKDF2', salt, iterations: 100000, hash: 'SHA-256' },
+        keyMaterial,
+        256
+      )
+      const candidateHex = Array.from(new Uint8Array(bits)).map(b => b.toString(16).padStart(2, '0')).join('')
+      return candidateHex === hashHex
+    } catch {
+      // fallback
+    }
+  }
+
+  // 3. Plaintext fallback
+  return password === stored
 }
 
 // Simple local storage keys for offline mobile app
@@ -220,7 +245,76 @@ export async function fetchCloudBatchesIfAvailable(): Promise<any[]> {
 }
 
 /**
- * Unified synchronization of all cloud data (products, batches, sales) from Supabase.
+ * Pushes full snapshot of non-tabular entities (Users, Customers, Suppliers, Purchases, Settings, Categories)
+ * into Supabase cloud_audit_logs to guarantee 100% offline/online reflection.
+ */
+export async function pushCloudStateMirror(stateId: string, category: string, dataKey: string, payload: any): Promise<void> {
+  const client = getSupabaseClient()
+  if (!client || !navigator.onLine) return
+  try {
+    await client.from('cloud_audit_logs').upsert({
+      id: stateId,
+      store_id: 'sml_accra_main',
+      action: 'SYSTEM_STATE_SNAPSHOT',
+      category: category,
+      details: `Live state snapshot for ${dataKey}`,
+      username: 'system',
+      user_role: 'ADMIN',
+      severity: 'INFO',
+      metadata: { [dataKey]: payload },
+      created_at: new Date().toISOString()
+    })
+  } catch (err) {
+    console.warn(`Failed to push state mirror for ${stateId}:`, err)
+  }
+}
+
+/**
+ * Fetches all state mirrors from Supabase cloud_audit_logs and syncs into local storage.
+ */
+export async function fetchCloudStateMirrorsIfAvailable(): Promise<void> {
+  const client = getSupabaseClient()
+  if (!client || !navigator.onLine) return
+  try {
+    const { data, error } = await client
+      .from('cloud_audit_logs')
+      .select('*')
+      .in('id', [
+        'STATE_USERS',
+        'STATE_CATEGORIES',
+        'STATE_CUSTOMERS',
+        'STATE_SUPPLIERS',
+        'STATE_PURCHASES',
+        'STATE_SETTINGS'
+      ])
+
+    if (error || !data || data.length === 0) return
+
+    for (const row of data) {
+      if (!row.metadata) continue
+      const meta = typeof row.metadata === 'string' ? JSON.parse(row.metadata) : row.metadata
+      if (row.id === 'STATE_USERS' && Array.isArray(meta.users) && meta.users.length > 0) {
+        setItem(STORAGE_KEYS.USERS, meta.users)
+      } else if (row.id === 'STATE_CATEGORIES' && Array.isArray(meta.categories) && meta.categories.length > 0) {
+        setItem(STORAGE_KEYS.CATEGORIES, meta.categories)
+      } else if (row.id === 'STATE_CUSTOMERS' && Array.isArray(meta.customers) && meta.customers.length > 0) {
+        setItem(STORAGE_KEYS.CUSTOMERS, meta.customers)
+      } else if (row.id === 'STATE_SUPPLIERS' && Array.isArray(meta.suppliers) && meta.suppliers.length > 0) {
+        setItem(STORAGE_KEYS.SUPPLIERS, meta.suppliers)
+      } else if (row.id === 'STATE_PURCHASES' && Array.isArray(meta.purchases)) {
+        setItem(STORAGE_KEYS.PURCHASES, meta.purchases)
+      } else if (row.id === 'STATE_SETTINGS' && meta.settings && typeof meta.settings === 'object') {
+        const existing = getItem(STORAGE_KEYS.SETTINGS, {})
+        setItem(STORAGE_KEYS.SETTINGS, { ...existing, ...meta.settings })
+      }
+    }
+  } catch (err) {
+    console.warn('Failed to fetch cloud state mirrors:', err)
+  }
+}
+
+/**
+ * Unified synchronization of all cloud data (products, batches, sales, state mirrors) from Supabase.
  */
 export async function syncAllCloudDataIfAvailable(): Promise<{
   medicines: any[]
@@ -231,6 +325,7 @@ export async function syncAllCloudDataIfAvailable(): Promise<{
     fetchCloudProductsIfAvailable().catch(() => getItem<any[]>(STORAGE_KEYS.MEDICINES, [])),
     fetchCloudBatchesIfAvailable().catch(() => getItem<any[]>(STORAGE_KEYS.BATCHES, [])),
     fetchCloudSalesIfAvailable().catch(() => getItem<any[]>(STORAGE_KEYS.SALES, [])),
+    fetchCloudStateMirrorsIfAvailable().catch(() => {}),
   ])
   return { medicines, batches, sales }
 }
@@ -449,6 +544,7 @@ seedInitialDataIfNeeded()
 export const mobileApi = {
   // Auth
   login: async (username: string, password: string) => {
+    await fetchCloudStateMirrorsIfAvailable().catch(() => {})
     await seedInitialDataIfNeeded()
     const users = getItem<any[]>(STORAGE_KEYS.USERS, [])
     const user = users.find(u => u.username.toLowerCase() === username.toLowerCase())
@@ -461,6 +557,7 @@ export const mobileApi = {
     return userWithoutPassword
   },
   loginWithPin: async (pin: string, selectedRole?: string) => {
+    await fetchCloudStateMirrorsIfAvailable().catch(() => {})
     await seedInitialDataIfNeeded()
     const users = getItem<any[]>(STORAGE_KEYS.USERS, [])
     let targetUsername = ''
@@ -680,6 +777,7 @@ export const mobileApi = {
     const newItem = { id: generateId(), ...data }
     list.push(newItem)
     setItem(STORAGE_KEYS.CATEGORIES, list)
+    pushCloudStateMirror('STATE_CATEGORIES', 'INVENTORY', 'categories', list).catch(() => {})
     return newItem
   },
   updateCategory: async (id: string, data: { name: string }) => {
@@ -688,6 +786,7 @@ export const mobileApi = {
     if (idx !== -1) {
       list[idx] = { ...list[idx], ...data }
       setItem(STORAGE_KEYS.CATEGORIES, list)
+      pushCloudStateMirror('STATE_CATEGORIES', 'INVENTORY', 'categories', list).catch(() => {})
       return list[idx]
     }
     throw new Error('Category not found')
@@ -696,6 +795,7 @@ export const mobileApi = {
     const list = getItem<any[]>(STORAGE_KEYS.CATEGORIES, [])
     const newList = list.filter(i => i.id !== id)
     setItem(STORAGE_KEYS.CATEGORIES, newList)
+    pushCloudStateMirror('STATE_CATEGORIES', 'INVENTORY', 'categories', newList).catch(() => {})
   },
 
   // Medicines
@@ -871,6 +971,7 @@ export const mobileApi = {
     const newItem = { id: generateId(), ...data }
     list.push(newItem)
     setItem(STORAGE_KEYS.SUPPLIERS, list)
+    pushCloudStateMirror('STATE_SUPPLIERS', 'SUPPLIERS', 'suppliers', list).catch(() => {})
     return newItem
   },
   updateSupplier: async (id: string, data: any) => {
@@ -879,13 +980,16 @@ export const mobileApi = {
     if (idx !== -1) {
       list[idx] = { ...list[idx], ...data }
       setItem(STORAGE_KEYS.SUPPLIERS, list)
+      pushCloudStateMirror('STATE_SUPPLIERS', 'SUPPLIERS', 'suppliers', list).catch(() => {})
       return list[idx]
     }
     throw new Error('Supplier not found')
   },
   deleteSupplier: async (id: string) => {
     const list = getItem<any[]>(STORAGE_KEYS.SUPPLIERS, [])
-    setItem(STORAGE_KEYS.SUPPLIERS, list.filter(i => i.id !== id))
+    const newList = list.filter(i => i.id !== id)
+    setItem(STORAGE_KEYS.SUPPLIERS, newList)
+    pushCloudStateMirror('STATE_SUPPLIERS', 'SUPPLIERS', 'suppliers', newList).catch(() => {})
   },
 
   // Customers
@@ -895,6 +999,7 @@ export const mobileApi = {
     const newItem = { id: generateId(), ...data }
     list.push(newItem)
     setItem(STORAGE_KEYS.CUSTOMERS, list)
+    pushCloudStateMirror('STATE_CUSTOMERS', 'CUSTOMERS', 'customers', list).catch(() => {})
     return newItem
   },
   updateCustomer: async (id: string, data: any) => {
@@ -903,13 +1008,16 @@ export const mobileApi = {
     if (idx !== -1) {
       list[idx] = { ...list[idx], ...data }
       setItem(STORAGE_KEYS.CUSTOMERS, list)
+      pushCloudStateMirror('STATE_CUSTOMERS', 'CUSTOMERS', 'customers', list).catch(() => {})
       return list[idx]
     }
     throw new Error('Customer not found')
   },
   deleteCustomer: async (id: string) => {
     const list = getItem<any[]>(STORAGE_KEYS.CUSTOMERS, [])
-    setItem(STORAGE_KEYS.CUSTOMERS, list.filter(i => i.id !== id))
+    const newList = list.filter(i => i.id !== id)
+    setItem(STORAGE_KEYS.CUSTOMERS, newList)
+    pushCloudStateMirror('STATE_CUSTOMERS', 'CUSTOMERS', 'customers', newList).catch(() => {})
   },
 
   // Sales (POS)
@@ -1063,6 +1171,7 @@ export const mobileApi = {
     const newItem = { id: generateId(), date: new Date().toISOString(), ...data }
     list.push(newItem)
     setItem(STORAGE_KEYS.PURCHASES, list)
+    pushCloudStateMirror('STATE_PURCHASES', 'PURCHASES', 'purchases', list).catch(() => {})
     return newItem
   },
   updatePurchase: async (id: string, data: any) => {
@@ -1071,13 +1180,16 @@ export const mobileApi = {
     if (idx !== -1) {
       list[idx] = { ...list[idx], ...data }
       setItem(STORAGE_KEYS.PURCHASES, list)
+      pushCloudStateMirror('STATE_PURCHASES', 'PURCHASES', 'purchases', list).catch(() => {})
       return list[idx]
     }
     throw new Error('Purchase not found')
   },
   deletePurchase: async (id: string) => {
     const list = getItem<any[]>(STORAGE_KEYS.PURCHASES, [])
-    setItem(STORAGE_KEYS.PURCHASES, list.filter(i => i.id !== id))
+    const newList = list.filter(i => i.id !== id)
+    setItem(STORAGE_KEYS.PURCHASES, newList)
+    pushCloudStateMirror('STATE_PURCHASES', 'PURCHASES', 'purchases', newList).catch(() => {})
   },
 
   // Users
@@ -1091,6 +1203,7 @@ export const mobileApi = {
     const newUser = { id: generateId(), username: data.username, role: data.role || 'CASHIER', password: hashedPassword, pin: data.pin || null, createdAt: new Date().toISOString() }
     users.push(newUser)
     setItem(STORAGE_KEYS.USERS, users)
+    pushCloudStateMirror('STATE_USERS', 'AUTH', 'users', users).catch(() => {})
     const { password, ...userNoPass } = newUser
     return userNoPass
   },
@@ -1104,6 +1217,7 @@ export const mobileApi = {
       }
       users[idx] = { ...users[idx], ...data }
       setItem(STORAGE_KEYS.USERS, users)
+      pushCloudStateMirror('STATE_USERS', 'AUTH', 'users', users).catch(() => {})
       const { password, ...userNoPass } = users[idx]
       return userNoPass
     }
@@ -1111,7 +1225,9 @@ export const mobileApi = {
   },
   deleteUser: async (id: string) => {
     const users = getItem<any[]>(STORAGE_KEYS.USERS, [])
-    setItem(STORAGE_KEYS.USERS, users.filter(u => u.id !== id))
+    const newUsers = users.filter(u => u.id !== id)
+    setItem(STORAGE_KEYS.USERS, newUsers)
+    pushCloudStateMirror('STATE_USERS', 'AUTH', 'users', newUsers).catch(() => {})
   },
 
   // Reports
@@ -1389,6 +1505,7 @@ export const mobileApi = {
     const current = getItem(STORAGE_KEYS.SETTINGS, {})
     const updated = { ...current, ...updates }
     setItem(STORAGE_KEYS.SETTINGS, updated)
+    pushCloudStateMirror('STATE_SETTINGS', 'SYSTEM', 'settings', updated).catch(() => {})
     return updated
   },
 

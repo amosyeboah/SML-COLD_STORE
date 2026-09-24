@@ -257,3 +257,37 @@ export function subscribeToCloudBatches(onUpdate: (payload: any) => void): () =>
   }
 }
 
+/**
+ * Realtime subscription to cloud_audit_logs table.
+ * Automatically notifies when audit logs or state mirrors (customers, users, settings, purchases) are modified.
+ */
+export function subscribeToCloudAuditLogs(onUpdate: (payload: any) => void): () => void {
+  const client = getSupabaseClient()
+  if (!client) return () => {}
+
+  try {
+    const channel = client
+      .channel('cloud_audit_logs_realtime')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'cloud_audit_logs' },
+        (payload) => {
+          onUpdate(payload)
+        }
+      )
+      .subscribe((status) => {
+        if (status === 'SUBSCRIBED') {
+          console.log('📡 [Supabase Realtime] Connected to cloud_audit_logs stream')
+        }
+      })
+
+    return () => {
+      client.removeChannel(channel)
+    }
+  } catch (err) {
+    console.warn('📡 [Supabase Realtime] Audit logs subscription error:', err)
+    return () => {}
+  }
+}
+
+

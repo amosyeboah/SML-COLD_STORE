@@ -82,6 +82,9 @@ export const api = {
     ipcRenderer.invoke('audit:getAll', filters),
   createAuditLog: (data: { action: string; category: string; details: string; username?: string; userRole?: string; severity?: string; metadata?: any }) =>
     ipcRenderer.invoke('audit:log', data),
+
+  // Full State Synchronization
+  getFullSyncState: () => ipcRenderer.invoke('sync:getFullState'),
 }
 
 if (process.contextIsolated) {

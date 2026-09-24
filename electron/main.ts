@@ -1405,3 +1405,36 @@ ipcMain.handle('audit:log', async (_, data: { action: string; category: string; 
   return { success: true }
 })
 
+// ─── Sync Full State Mirror ───────────────────────────────────────────────────
+ipcMain.handle('sync:getFullState', async () => {
+  const [users, categories, customers, suppliers, purchases, settings] = await Promise.all([
+    prisma.user.findMany(),
+    prisma.category.findMany({ orderBy: { name: 'asc' } }),
+    prisma.customer.findMany({ orderBy: { name: 'asc' } }),
+    prisma.supplier.findMany({ orderBy: { name: 'asc' } }),
+    prisma.purchase.findMany({
+      include: {
+        supplier: true,
+        items: { include: { medicine: true } }
+      },
+      orderBy: { date: 'desc' },
+      take: 100
+    }),
+    prisma.setting.findMany(),
+  ])
+
+  const settingsMap: Record<string, string> = {}
+  for (const s of settings) {
+    settingsMap[s.key] = s.value
+  }
+
+  return {
+    users,
+    categories,
+    customers,
+    suppliers,
+    purchases,
+    settings: settingsMap,
+  }
+})
+

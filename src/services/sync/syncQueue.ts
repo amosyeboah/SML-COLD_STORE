@@ -495,6 +495,109 @@ export async function reconcileAllSalesWithCloud(): Promise<{
           }
         }
       }
+
+      // 2d. Reconcile Full State Mirrors (Users, Customers, Suppliers, Purchases, Settings, Categories)
+      if ((window as any).api?.getFullSyncState) {
+        const fullState = await (window as any).api.getFullSyncState()
+        if (fullState) {
+          const timestamp = new Date().toISOString()
+          const mirrorUpserts: any[] = []
+
+          if (Array.isArray(fullState.users) && fullState.users.length > 0) {
+            mirrorUpserts.push({
+              id: 'STATE_USERS',
+              store_id: 'sml_accra_main',
+              action: 'SYSTEM_STATE_SNAPSHOT',
+              category: 'AUTH',
+              details: `Synchronized ${fullState.users.length} users from SQLite`,
+              username: 'system',
+              user_role: 'ADMIN',
+              severity: 'INFO',
+              metadata: { users: fullState.users },
+              created_at: timestamp
+            })
+          }
+
+          if (Array.isArray(fullState.categories) && fullState.categories.length > 0) {
+            mirrorUpserts.push({
+              id: 'STATE_CATEGORIES',
+              store_id: 'sml_accra_main',
+              action: 'SYSTEM_STATE_SNAPSHOT',
+              category: 'INVENTORY',
+              details: `Synchronized ${fullState.categories.length} categories from SQLite`,
+              username: 'system',
+              user_role: 'ADMIN',
+              severity: 'INFO',
+              metadata: { categories: fullState.categories },
+              created_at: timestamp
+            })
+          }
+
+          if (Array.isArray(fullState.customers) && fullState.customers.length > 0) {
+            mirrorUpserts.push({
+              id: 'STATE_CUSTOMERS',
+              store_id: 'sml_accra_main',
+              action: 'SYSTEM_STATE_SNAPSHOT',
+              category: 'CUSTOMERS',
+              details: `Synchronized ${fullState.customers.length} customers from SQLite`,
+              username: 'system',
+              user_role: 'ADMIN',
+              severity: 'INFO',
+              metadata: { customers: fullState.customers },
+              created_at: timestamp
+            })
+          }
+
+          if (Array.isArray(fullState.suppliers) && fullState.suppliers.length > 0) {
+            mirrorUpserts.push({
+              id: 'STATE_SUPPLIERS',
+              store_id: 'sml_accra_main',
+              action: 'SYSTEM_STATE_SNAPSHOT',
+              category: 'SUPPLIERS',
+              details: `Synchronized ${fullState.suppliers.length} suppliers from SQLite`,
+              username: 'system',
+              user_role: 'ADMIN',
+              severity: 'INFO',
+              metadata: { suppliers: fullState.suppliers },
+              created_at: timestamp
+            })
+          }
+
+          if (Array.isArray(fullState.purchases) && fullState.purchases.length > 0) {
+            mirrorUpserts.push({
+              id: 'STATE_PURCHASES',
+              store_id: 'sml_accra_main',
+              action: 'SYSTEM_STATE_SNAPSHOT',
+              category: 'PURCHASES',
+              details: `Synchronized ${fullState.purchases.length} purchases from SQLite`,
+              username: 'system',
+              user_role: 'ADMIN',
+              severity: 'INFO',
+              metadata: { purchases: fullState.purchases },
+              created_at: timestamp
+            })
+          }
+
+          if (fullState.settings && typeof fullState.settings === 'object') {
+            mirrorUpserts.push({
+              id: 'STATE_SETTINGS',
+              store_id: 'sml_accra_main',
+              action: 'SYSTEM_STATE_SNAPSHOT',
+              category: 'SYSTEM',
+              details: 'Synchronized store settings from SQLite',
+              username: 'system',
+              user_role: 'ADMIN',
+              severity: 'INFO',
+              metadata: { settings: fullState.settings },
+              created_at: timestamp
+            })
+          }
+
+          if (mirrorUpserts.length > 0) {
+            await client.from('cloud_audit_logs').upsert(mirrorUpserts)
+          }
+        }
+      }
     } catch (dbErr) {
       console.warn('Reconcile SQLite notice:', dbErr)
     }

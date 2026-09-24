@@ -2,13 +2,13 @@ import { useEffect } from 'react'
 import { RouterProvider } from 'react-router-dom'
 import { router } from '@/routes'
 import { Providers } from './providers'
-import { subscribeToCloudSales, subscribeToCloudProducts, subscribeToCloudBatches } from '@/services/sync/supabaseClient'
+import { subscribeToCloudSales, subscribeToCloudProducts, subscribeToCloudBatches, subscribeToCloudAuditLogs } from '@/services/sync/supabaseClient'
 import { queryClient } from '@/lib/queryClient'
-import { syncAllCloudDataIfAvailable, fetchCloudSalesIfAvailable, fetchCloudProductsIfAvailable, fetchCloudBatchesIfAvailable } from '@/services/api/mobileStorage'
+import { syncAllCloudDataIfAvailable, fetchCloudSalesIfAvailable, fetchCloudProductsIfAvailable, fetchCloudBatchesIfAvailable, fetchCloudStateMirrorsIfAvailable } from '@/services/api/mobileStorage'
 
 export default function App() {
   useEffect(() => {
-    // 1. Initial warm up of all cloud data (catalog, inventory, sales) into local storage
+    // 1. Initial warm up of all cloud data (catalog, inventory, sales, state mirrors) into local storage
     syncAllCloudDataIfAvailable().catch(() => {})
 
     // 2. Real-time subscription to cloud_sales table
@@ -38,10 +38,24 @@ export default function App() {
       queryClient.invalidateQueries({ queryKey: ['dashboard-stats'] })
     })
 
+    // 5. Real-time subscription to cloud_audit_logs table (state snapshots & audit logs)
+    const unsubscribeAudit = subscribeToCloudAuditLogs(async (payload) => {
+      console.log('📡 [Supabase Realtime] Cloud state mirror update:', payload.eventType)
+      await fetchCloudStateMirrorsIfAvailable().catch(() => {})
+      queryClient.invalidateQueries({ queryKey: ['users'] })
+      queryClient.invalidateQueries({ queryKey: ['customers'] })
+      queryClient.invalidateQueries({ queryKey: ['suppliers'] })
+      queryClient.invalidateQueries({ queryKey: ['purchases'] })
+      queryClient.invalidateQueries({ queryKey: ['settings'] })
+      queryClient.invalidateQueries({ queryKey: ['categories'] })
+      queryClient.invalidateQueries({ queryKey: ['audit-logs'] })
+    })
+
     return () => {
       unsubscribeSales()
       unsubscribeProducts()
       unsubscribeBatches()
+      unsubscribeAudit()
     }
   }, [])
 
