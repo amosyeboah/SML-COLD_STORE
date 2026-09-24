@@ -8,14 +8,57 @@ export interface SupabaseConfig {
 
 const STORAGE_KEY = 'sml_coldstore_supabase_config'
 
-// Default Supabase config for SML Legacy Limited cloud database
-const DEFAULT_URL = (import.meta as any).env?.VITE_SUPABASE_URL || 'https://yhglbervaljjkmttzonk.supabase.co'
-const DEFAULT_ANON_KEY = (import.meta as any).env?.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InloZ2xiZXJ2YWxqamttdHR6b25rIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTAwNDA4MzIsImV4cCI6MjEwNTYxNjgzMn0.8STKvBtPKL3J9BH7Mdvadrna-zcYYFqGXGaBx4y_Wis'
+// Clean up any residual credentials from browser localStorage
+if (typeof localStorage !== 'undefined') {
+  try {
+    localStorage.removeItem(STORAGE_KEY)
+  } catch {}
+}
 
-const DEFAULT_CONFIG: SupabaseConfig = {
-  url: DEFAULT_URL,
-  anonKey: DEFAULT_ANON_KEY,
+// Credentials loaded securely from backend environment (.env / Electron backend / Vercel env)
+const BACKEND_URL = (import.meta as any).env?.VITE_SUPABASE_URL || 'https://yhglbervaljjkmttzonk.supabase.co'
+const BACKEND_ANON_KEY = (import.meta as any).env?.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InloZ2xiZXJ2YWxqamttdHR6b25rIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTAwNDA4MzIsImV4cCI6MjEwNTYxNjgzMn0.8STKvBtPKL3J9BH7Mdvadrna-zcYYFqGXGaBx4y_Wis'
+
+let backendConfig: SupabaseConfig = {
+  url: BACKEND_URL,
+  anonKey: BACKEND_ANON_KEY,
   enabled: true,
+}
+
+let backendConfigPromise: Promise<SupabaseConfig> | null = null
+
+export async function initBackendCloudConfig(): Promise<SupabaseConfig> {
+  if (backendConfigPromise) return backendConfigPromise
+
+  backendConfigPromise = (async () => {
+    try {
+      if (typeof window !== 'undefined' && (window as any).api?.getCloudCredentials) {
+        const creds = await (window as any).api.getCloudCredentials()
+        if (creds?.url && creds?.anonKey) {
+          backendConfig = {
+            url: creds.url,
+            anonKey: creds.anonKey,
+            enabled: true,
+          }
+          if (cachedUrl !== creds.url || cachedKey !== creds.anonKey) {
+            cachedClient = null
+            cachedUrl = null
+            cachedKey = null
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('Could not load credentials from backend daemon:', err)
+    }
+    return backendConfig
+  })()
+
+  return backendConfigPromise
+}
+
+// Trigger initial backend load
+if (typeof window !== 'undefined') {
+  initBackendCloudConfig()
 }
 
 let cachedClient: SupabaseClient | null = null
@@ -23,31 +66,15 @@ let cachedUrl: string | null = null
 let cachedKey: string | null = null
 
 export function getSupabaseConfig(): SupabaseConfig {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY)
-    if (raw) {
-      const parsed = JSON.parse(raw)
-      return {
-        url: parsed.url && parsed.url.trim() ? parsed.url.trim() : DEFAULT_CONFIG.url,
-        anonKey: parsed.anonKey && parsed.anonKey.trim() ? parsed.anonKey.trim() : DEFAULT_CONFIG.anonKey,
-        enabled: parsed.enabled ?? true,
-      }
-    }
-  } catch {
-    // fallback
-  }
-  return DEFAULT_CONFIG
+  return backendConfig
 }
 
 export function saveSupabaseConfig(config: Partial<SupabaseConfig>): SupabaseConfig {
-  const current = getSupabaseConfig()
-  const updated = { ...current, ...config }
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(updated))
-  // Invalidate cached client
-  cachedClient = null
-  cachedUrl = null
-  cachedKey = null
-  return updated
+  // Credentials cannot be modified from the UI; only toggle enabled state in memory if needed
+  if (typeof config.enabled === 'boolean') {
+    backendConfig.enabled = config.enabled
+  }
+  return backendConfig
 }
 
 export function getSupabaseClient(): SupabaseClient | null {
@@ -86,11 +113,12 @@ export interface ConnectionCheckResult {
  * Fast ping check to verify live connectivity to Supabase cloud.
  */
 export async function checkCloudConnection(): Promise<ConnectionCheckResult> {
+  await initBackendCloudConfig()
   const config = getSupabaseConfig()
   if (!config.url || !config.anonKey) {
     return {
       connected: false,
-      message: 'Supabase URL or Anon Key is not configured',
+      message: 'Supabase URL or Anon Key is not configured in backend environment',
       latencyMs: 0,
     }
   }

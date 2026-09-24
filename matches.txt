@@ -1,0 +1,95 @@
+src\app\App.tsx:27:queryClient.invalidateQueries({ queryKey: ['medicines'] })
+src\app\App.tsx:37:queryClient.invalidateQueries({ queryKey: ['medicines'] })
+src\components\common\Sidebar.tsx:29:{ to: '/medicines', label: 'Products', icon: Package, allowedRoles: ['ADMIN', 'MANAGER', 'CASHIER'] },
+src\components\common\TopBar.tsx:23:'/medicines': 'Manage your frozen products catalog.',
+src\components\common\TopBar.tsx:88:queryClient.invalidateQueries({ queryKey: ['medicines'] })
+src\components\common\TopBar.tsx:131:const { data: medicines } = useQuery({ queryKey: ['medicines'], queryFn: () => window.api.getMedicines() })
+src\components\common\TopBar.tsx:150:{pathname === '/medicines' ? 'Products' : pathname.replace('/', '')}
+src\components\common\TopBar.tsx:307:return ['/dashboard', '/pos', '/medicines', '/customers'].includes(path)
+src\components\common\TopBar.tsx:319:<p className="text-sm font-semibold capitalize">{path === '/medicines' ? 'Products' : path.replace('/', '')}</p>
+src\components\common\TopBar.tsx:331:onSelect={() => { navigate('/medicines'); setSearchOpen(false) }}
+src\pages\BatchTracking\index.tsx:375:<p className="font-bold text-gray-800 text-sm truncate">{batch.medicine?.name ?? '--'}</p>
+src\pages\BatchTracking\index.tsx:377:<p className="text-xs text-gray-400 truncate">{batch.medicine.genericName}</p>
+src\pages\BatchTracking\index.tsx:471:<p className="text-sm font-semibold text-gray-800">{batch.medicine?.name ?? '--'}</p>
+src\pages\BatchTracking\index.tsx:473:<p className="text-xs text-gray-400">{batch.medicine.genericName}</p>
+src\pages\Categories\index.tsx:50:queryKey: ['medicines'],
+src\pages\Categories\index.tsx:173:<p className="mt-0.5 text-xl font-bold text-white">{(medicines as any[]).length}</p>
+src\pages\Dashboard\index.tsx:113:{ label: 'Add Product', icon: Package, color: '#22c55e', bg: 'rgba(34,197,94,0.1)', to: '/medicines' },
+src\pages\Expiry\index.tsx:219:<p className="font-bold text-slate-800 text-sm truncate">{batch.medicine?.name || 'Unnamed Product'}</p>
+src\pages\Expiry\index.tsx:300:<TableCell className="font-semibold text-slate-800">{batch.medicine?.name}</TableCell>
+src\pages\Inventory\index.tsx:66:queryKey: ['medicines'],
+src\pages\Inventory\index.tsx:74:queryClient.invalidateQueries({ queryKey: ['medicines'] })
+src\pages\Inventory\index.tsx:89:queryClient.invalidateQueries({ queryKey: ['medicines'] })
+src\pages\Inventory\index.tsx:100:setValue('medicineId', medicineId)
+src\pages\Inventory\index.tsx:342:{...register('medicineId')}
+src\pages\Inventory\index.tsx:350:{errors.medicineId && <p className="text-xs text-red-500">{errors.medicineId.message}</p>}
+src\pages\Inventory\index.tsx:439:<p className="font-bold text-slate-800 text-sm truncate">{item.medicine.name}</p>
+src\pages\Inventory\index.tsx:440:<p className="text-xs text-slate-400 truncate">{item.medicine.genericName || 'Standard cut'}</p>
+src\pages\Inventory\index.tsx:450:<p className="font-mono font-semibold text-slate-600 bg-slate-50 border border-slate-200 rounded px-1.5 py-0.5 inline-block mt-0.5">{item.medicine.sku}</p>
+src\pages\Inventory\index.tsx:454:<p className="font-bold text-slate-800">₵{item.medicine.price.toFixed(2)}</p>
+src\pages\Inventory\index.tsx:509:<p className="font-bold text-slate-800 text-sm">{item.medicine.name}</p>
+src\pages\Inventory\index.tsx:514:<p className="text-xs text-slate-400">{item.medicine.genericName || 'N/A'}</p>
+src\pages\Inventory\index.tsx:517:<TableCell className="font-semibold text-slate-900 py-2.5 sm:py-3">₵{item.medicine.price.toFixed(2)}</TableCell>
+src\pages\Inventory\index.tsx:619:{selectedMedicineForLots?.genericName ? `${selectedMedicineForLots.genericName} • ` : ''}
+src\pages\Inventory\index.tsx:632:<p className="text-base sm:text-lg font-extrabold text-slate-800">{lotsForSelectedMedicine.length} <span className="text-xs font-normal">lot(s)</span></p>
+src\pages\Inventory\index.tsx:636:<p className="text-base sm:text-lg font-extrabold text-slate-800">{selectedMedicineForLots?.minStockLevel || 10} <span className="text-xs font-normal">cartons</span></p>
+src\pages\Inventory\index.tsx:652:<span>Existing Lots &amp; Adjust ({lotsForSelectedMedicine.length})</span>
+src\pages\Inventory\index.tsx:833:Receiving fresh inventory lot for <strong>{selectedMedicineForLots?.name}</strong> ({selectedMedicineForLots?.sku})
+src\pages\Medicines\index.tsx:47:queryKey: ['medicines'],
+src\pages\Medicines\index.tsx:64:queryClient.invalidateQueries({ queryKey: ['medicines'] })
+src\pages\Medicines\index.tsx:72:queryClient.invalidateQueries({ queryKey: ['medicines'] })
+src\pages\Medicines\index.tsx:81:queryClient.invalidateQueries({ queryKey: ['medicines'] })
+src\pages\Medicines\index.tsx:189:<p className="text-base sm:text-lg font-semibold">{totalMedicines}</p>
+src\pages\Medicines\index.tsx:467:Showing <span className="font-semibold text-slate-800">{filteredMedicines.length === 0 ? 0 : startIndex + 1}</span>
+src\pages\Medicines\index.tsx:468:{' '}-<span className="font-semibold text-slate-800">{Math.min(startIndex + ITEMS_PER_PAGE, filteredMedicines.length)}</span>
+src\pages\Medicines\index.tsx:469:{' '}of <span className="font-semibold text-slate-800">{filteredMedicines.length}</span> items
+src\pages\POS\index.tsx:938:<td style="padding:3px 0;max-width:150px;word-break:break-word;">${item.medicine.name}</td>
+src\pages\POS\index.tsx:940:<td style="text-align:right;vertical-align:top;padding:3px 0;">${currencySymbol}${(item.medicine.price * item.quantity).toFixed(2)}</td>
+src\pages\POS\index.tsx:1063:setToast({ type: 'error', message: `Cannot add more ${product.medicine.name}. Max available stock is ${product.totalStock}.` })
+src\pages\POS\index.tsx:1100:setToast({ type: 'success', message: `Added ${target.medicine.name} to cart` })
+src\pages\POS\index.tsx:1117:setToast({ type: 'error', message: `Maximum stock for ${item.medicine.name} is ${item.maxAvailable}` })
+src\pages\POS\index.tsx:1623:to="/medicines"
+src\pages\POS\index.tsx:1690:<p className="truncate text-xs sm:text-sm font-bold text-slate-800">{prod.medicine.name}</p>
+src\pages\POS\index.tsx:1696:<p className="text-xs sm:text-sm font-bold text-slate-800">{currencySymbol}{prod.medicine.price.toFixed(2)}</p>
+src\pages\Prescriptions\index.tsx:38:<TableHead>Medicines Dispensed</TableHead>
+src\pages\Purchases\index.tsx:124:<td className="px-4 py-2.5 font-semibold text-slate-800">{item.medicine?.name || '—'}</td>
+src\pages\Purchases\index.tsx:380:const { data: medicines = [] } = useQuery<Medicine[]>({ queryKey: ['medicines'], queryFn: () => window.api.getMedicines() })
+src\pages\Purchases\index.tsx:385:queryClient.invalidateQueries({ queryKey: ['medicines'] })
+src\pages\Reports\index.tsx:268:'top-selling': ['topMedicines'],
+src\pages\Reports\index.tsx:607:{(shouldShowSection(activeReport, 'topMedicines') ||
+src\pages\Reports\index.tsx:611:{shouldShowSection(activeReport, 'topMedicines') && (
+src\pages\Sync\index.tsx:96:queryClient.invalidateQueries({ queryKey: ['medicines'] })
+src\routes\index.tsx:8:import Medicines from '@/pages/Medicines'
+src\routes\index.tsx:40:{ path: 'medicines', element: <Medicines /> },
+src\routes\index.tsx:41:{ path: 'products', element: <Navigate to="/medicines" replace /> },
+src\services\api\mobileStorage.ts:65:MEDICINES: 'sml_coldstore_medicines',
+src\services\api\mobileStorage.ts:500:{ id: '625bc9ae-9c02-4204-8801-328742f16848', medicineId: '37a5d650-1524-4f59-a6dd-cbbe7ef2881b', batchNumber: 'CHK-2024-001', expiryDate: '2027-09-20T14:30:13.686Z', quantity: 79 },
+src\services\api\mobileStorage.ts:501:{ id: 'e0cc86cb-6a6b-4410-bbe5-84b7ad2f7388', medicineId: 'be415fce-3c23-499c-9aa4-2621e7cd4283', batchNumber: 'CHL-2024-001', expiryDate: '2027-09-20T14:30:13.686Z', quantity: 60 },
+src\services\api\mobileStorage.ts:502:{ id: '87a2d385-2fb7-4807-8b08-3f86187b7718', medicineId: 'e6e2c37e-2abd-4dad-b83b-48a39a6dc917', batchNumber: 'CHB-2024-001', expiryDate: '2027-09-20T14:30:13.686Z', quantity: 49 },
+src\services\api\mobileStorage.ts:503:{ id: '694fc776-f0ba-4829-80e9-43446738b3f9', medicineId: 'ed11f170-2018-46a1-ab34-2d496834b657', batchNumber: 'TKY-2024-001', expiryDate: '2027-09-20T14:30:13.686Z', quantity: 18 },
+src\services\api\mobileStorage.ts:504:{ id: '4c1b2483-1696-41fa-b0d0-a08daf1fc45d', medicineId: 'c270e28f-39c7-429a-afd8-fc32ad601353', batchNumber: 'TLP-2024-001', expiryDate: '2026-10-10T14:30:13.686Z', quantity: 9 },
+src\services\api\mobileStorage.ts:505:{ id: '22b0b3ba-b343-4ac4-9b8f-dd059d24ddc3', medicineId: 'c270e28f-39c7-429a-afd8-fc32ad601353', batchNumber: 'TLP-2024-002', expiryDate: '2027-09-20T14:30:13.686Z', quantity: 90 },
+src\services\api\mobileStorage.ts:506:{ id: '63712642-3d27-4eff-99fd-a9912ad8dcf2', medicineId: '92988ace-446e-462e-9dd6-a3b8ae1b174d', batchNumber: 'MCK-2024-001', expiryDate: '2027-09-20T14:30:13.686Z', quantity: 119 },
+src\services\api\mobileStorage.ts:507:{ id: 'dbc6c387-c759-4b94-9e24-c2263b077c78', medicineId: '8dfbd3f1-5689-4cd9-8eb1-5bac0a57b041', batchNumber: 'PRW-2024-001', expiryDate: '2027-09-20T14:30:13.686Z', quantity: 39 },
+src\services\api\mobileStorage.ts:508:{ id: '73b485c3-9b90-4362-87d3-68a163b9e87c', medicineId: '12c42394-fe38-4abe-afc9-8f5cfc1cb59d', batchNumber: 'SQD-2024-001', expiryDate: '2027-09-20T14:30:13.686Z', quantity: 35 },
+src\services\api\mobileStorage.ts:509:{ id: 'f026e640-95f4-449f-8f53-1713350e6026', medicineId: 'ae2508c6-2562-433a-be86-ee2628698810', batchNumber: 'BFC-2024-001', expiryDate: '2027-09-20T14:30:13.686Z', quantity: 75 },
+src\services\api\mobileStorage.ts:510:{ id: '5c142866-fff8-4420-8606-a4ab9dc8a625', medicineId: '06b9c137-8e59-4ba0-9f6f-58566b7af925', batchNumber: 'BFM-2024-001', expiryDate: '2027-09-20T14:30:13.686Z', quantity: 99 },
+src\services\api\mobileStorage.ts:511:{ id: '7454a04e-c3a8-4acb-b49e-f5c636bf8467', medicineId: 'ad058b73-91ce-4fe3-aaf1-817df616b081', batchNumber: 'MTN-2024-001', expiryDate: '2027-09-20T14:30:13.686Z', quantity: 30 },
+src\services\api\mobileStorage.ts:512:{ id: 'dcca192d-544e-4c8f-b47d-48fde1784ad0', medicineId: 'c6686721-6530-49e9-add5-d41215bb2004', batchNumber: 'OXT-2024-001', expiryDate: '2026-08-20T14:30:13.686Z', quantity: 5 },
+src\services\api\mobileStorage.ts:513:{ id: 'dcb09924-f3ff-4293-b943-6f5c109da8f1', medicineId: 'c6686721-6530-49e9-add5-d41215bb2004', batchNumber: 'OXT-2024-002', expiryDate: '2027-09-20T14:30:13.686Z', quantity: 45 },
+src\services\api\mobileStorage.ts:514:{ id: '5c91a840-6a7a-4973-88a2-7caa2229b0be', medicineId: 'bc239d26-9828-462b-b0b1-55aa836ad379', batchNumber: 'PRK-2024-001', expiryDate: '2027-09-20T14:30:13.686Z', quantity: 55 },
+src\services\api\mobileStorage.ts:515:{ id: '512c7098-79ba-4ecb-ab2c-efc213b3e1ff', medicineId: '622fcf37-ee76-42a0-8350-7e0ea6564981', batchNumber: 'PKB-2024-001', expiryDate: '2027-09-20T14:30:13.686Z', quantity: 48 },
+src\services\api\mobileStorage.ts:516:{ id: '3fa036a5-a99c-456c-924e-0986e467d630', medicineId: 'bf64f1fd-6841-4009-b8db-244ed8c9cdda', batchNumber: 'BSG-2024-001', expiryDate: '2028-09-20T14:30:13.686Z', quantity: 90 },
+src\services\api\mobileStorage.ts:517:{ id: 'fce193a5-56c1-4d1e-9c8f-4d28502d27df', medicineId: 'eeae3fed-ba46-448a-95c4-487fefb519b9', batchNumber: 'CHD-2024-001', expiryDate: '2028-09-20T14:30:13.686Z', quantity: 110 },
+src\services\api\mobileStorage.ts:518:{ id: '558d92a9-69ba-4197-80f6-7ab28dcb1970', medicineId: 'bde469d3-2a18-4c61-9b23-c1275fb48fff', batchNumber: 'BCN-2024-001', expiryDate: '2028-09-20T14:30:13.686Z', quantity: 70 },
+src\services\api\mobileStorage.ts:519:{ id: 'b7fb0cd8-67cf-4d46-9925-bf6586f132c9', medicineId: '13519c67-df8f-454a-8656-82d30d803090', batchNumber: 'MVG-2024-001', expiryDate: '2028-09-20T14:30:13.686Z', quantity: 150 },
+src\services\api\mobileStorage.ts:520:{ id: 'f4f6449d-dbb7-4d9d-8b02-4389f608147a', medicineId: 'd35aa4e9-cdf7-47b4-9bd3-ab22559f55e1', batchNumber: 'GBN-2024-001', expiryDate: '2028-09-20T14:30:13.686Z', quantity: 120 },
+src\services\api\mobileStorage.ts:521:{ id: '8ad8fb5b-10b2-4982-b2f0-0bab097ae3d3', medicineId: 'a0dcb2d1-3530-43f1-8722-9c4f02008ada', batchNumber: 'BTR-2024-001', expiryDate: '2027-09-20T14:30:13.686Z', quantity: 80 },
+src\services\api\mobileStorage.ts:522:{ id: 'c15fb55a-944c-4bb8-a74e-c393cfebd804', medicineId: '972d4193-08eb-4f8a-8d58-131446008150', batchNumber: 'EGG-2024-001', expiryDate: '2026-10-10T14:30:13.686Z', quantity: 8 },
+src\services\api\mobileStorage.ts:523:{ id: '36b081bf-2bd0-4b30-9e27-558b7960d12a', medicineId: '972d4193-08eb-4f8a-8d58-131446008150', batchNumber: 'EGG-2024-002', expiryDate: '2027-09-20T14:30:13.686Z', quantity: 50 },
+src\services\api\mobileStorage.ts:524:{ id: 'e5f60ae1-d756-4da5-b7ab-d2b78e85db4a', medicineId: 'c270e28f-39c7-429a-afd8-fc32ad601353', batchNumber: 'Tyuryr', expiryDate: '2027-03-19T00:00:00.000Z', quantity: 12 },
+src\services\api\mobileStorage.ts:525:{ id: 'ddd7b772-e061-4bd4-b28f-fa485d5b73e0', medicineId: '2341b5e9-f531-4cfc-9240-824e1b4c77dc', batchNumber: 'GAT-587575', expiryDate: '2028-06-22T00:00:00.000Z', quantity: 8 }
+src\services\api\mobileStorage.ts:936:throw new Error('Medicine not found')
+src\services\api\mobileStorage.ts:1487:name: allMedicines.find(m => m.id === batch.medicineId)?.name || 'Unknown Medicine',
+src\services\invoices.ts:12:items: { type: 'medicine' | 'product' | 'service'; itemId: number; quantity: number; unitPrice: number; insuranceCoverage: number }[]
+src\store\authStore.ts:14:const oldAuth = localStorage.getItem('pharmacy-auth')

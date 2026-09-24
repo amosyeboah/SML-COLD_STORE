@@ -1,0 +1,25 @@
+src\components\common\Sidebar.tsx:29:{ to: '/medicines', label: 'Products', icon: Package, allowedRoles: ['ADMIN', 'MANAGER', 'CASHIER'] },
+src\components\common\TopBar.tsx:23:'/medicines': 'Manage your frozen products catalog.',
+src\components\common\TopBar.tsx:150:{pathname === '/medicines' ? 'Products' : pathname.replace('/', '')}
+src\components\common\TopBar.tsx:307:return ['/dashboard', '/pos', '/medicines', '/customers'].includes(path)
+src\components\common\TopBar.tsx:319:<p className="text-sm font-semibold capitalize">{path === '/medicines' ? 'Products' : path.replace('/', '')}</p>
+src\components\common\TopBar.tsx:331:onSelect={() => { navigate('/medicines'); setSearchOpen(false) }}
+src\pages\Categories\index.tsx:50:queryKey: ['medicines'],
+src\pages\Categories\index.tsx:173:<p className="mt-0.5 text-xl font-bold text-white">{(medicines as any[]).length}</p>
+src\pages\Dashboard\index.tsx:113:{ label: 'Add Product', icon: Package, color: '#22c55e', bg: 'rgba(34,197,94,0.1)', to: '/medicines' },
+src\pages\Inventory\index.tsx:66:queryKey: ['medicines'],
+src\pages\Inventory\index.tsx:619:{selectedMedicineForLots?.genericName ? `${selectedMedicineForLots.genericName} • ` : ''}
+src\pages\Inventory\index.tsx:636:<p className="text-base sm:text-lg font-extrabold text-slate-800">{selectedMedicineForLots?.minStockLevel || 10} <span className="text-xs font-normal">cartons</span></p>
+src\pages\Inventory\index.tsx:833:Receiving fresh inventory lot for <strong>{selectedMedicineForLots?.name}</strong> ({selectedMedicineForLots?.sku})
+src\pages\Medicines\index.tsx:47:queryKey: ['medicines'],
+src\pages\Medicines\index.tsx:189:<p className="text-base sm:text-lg font-semibold">{totalMedicines}</p>
+src\pages\POS\index.tsx:1623:to="/medicines"
+src\pages\Prescriptions\index.tsx:38:<TableHead>Medicines Dispensed</TableHead>
+src\pages\Reports\index.tsx:268:'top-selling': ['topMedicines'],
+src\pages\Reports\index.tsx:607:{(shouldShowSection(activeReport, 'topMedicines') ||
+src\pages\Reports\index.tsx:611:{shouldShowSection(activeReport, 'topMedicines') && (
+src\routes\index.tsx:40:{ path: 'medicines', element: <Medicines /> },
+src\routes\index.tsx:41:{ path: 'products', element: <Navigate to="/medicines" replace /> },
+src\services\api\mobileStorage.ts:65:MEDICINES: 'sml_coldstore_medicines',
+src\services\api\mobileStorage.ts:937:throw new Error('Medicine not found')
+src\services\invoices.ts:12:items: { type: 'medicine' | 'product' | 'service'; itemId: number; quantity: number; unitPrice: number; insuranceCoverage: number }[]

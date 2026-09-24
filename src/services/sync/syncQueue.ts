@@ -222,13 +222,20 @@ export async function flushSyncQueue(): Promise<{
         if (item.entity === 'SALE') {
           const sale = item.payload
           // 1. Upload parent sale
+          let pm = sale.paymentMethod || 'CASH'
+          if (sale.payments && Array.isArray(sale.payments) && sale.payments.length > 1) {
+            const cashAmt = sale.payments.filter((p: any) => !(p.method || '').toUpperCase().includes('MOBILE') && !(p.method || '').toUpperCase().includes('MOMO')).reduce((sum: number, p: any) => sum + (Number(p.amount) || 0), 0)
+            const mobileAmt = sale.payments.filter((p: any) => (p.method || '').toUpperCase().includes('MOBILE') || (p.method || '').toUpperCase().includes('MOMO')).reduce((sum: number, p: any) => sum + (Number(p.amount) || 0), 0)
+            pm = `SPLIT:CASH=${cashAmt},MOBILE=${mobileAmt}`
+          }
+
           const { error: saleErr } = await client.from('cloud_sales').upsert({
             id: sale.id,
             store_id: 'sml_accra_main',
             sale_number: sale.saleNumber || `INV-${sale.id.slice(0, 8).toUpperCase()}`,
             customer_name: sale.customer?.name || sale.customerName || 'Walk-in Customer',
             total: sale.total,
-            payment_method: sale.paymentMethod || 'CASH',
+            payment_method: pm,
             cashier_username: sale.cashier || 'cashier',
             date: sale.date || new Date().toISOString(),
             synced_at: new Date().toISOString(),
@@ -466,13 +473,22 @@ export async function reconcileAllSalesWithCloud(): Promise<{
         const unsyncedDbSales = allDbSales.filter((s: any) => !cloudIdSet.has(s.id))
 
         for (const sale of unsyncedDbSales) {
+          let pm = sale.paymentMethod || 'CASH'
+          if (sale.payments && Array.isArray(sale.payments) && sale.payments.length > 1) {
+            const cashAmt = sale.payments.filter((p: any) => !(p.method || '').toUpperCase().includes('MOBILE') && !(p.method || '').toUpperCase().includes('MOMO')).reduce((sum: number, p: any) => sum + (Number(p.amount) || 0), 0)
+            const mobileAmt = sale.payments.filter((p: any) => (p.method || '').toUpperCase().includes('MOBILE') || (p.method || '').toUpperCase().includes('MOMO')).reduce((sum: number, p: any) => sum + (Number(p.amount) || 0), 0)
+            pm = `SPLIT:CASH=${cashAmt},MOBILE=${mobileAmt}`
+          } else if (pm === 'SPLIT') {
+            pm = `SPLIT:CASH=${(sale.total || 0) / 2},MOBILE=${(sale.total || 0) / 2}`
+          }
+
           const { error: saleErr } = await client.from('cloud_sales').upsert({
             id: sale.id,
             store_id: 'sml_accra_main',
             sale_number: `INV-${String(sale.id).slice(0, 8).toUpperCase()}`,
             customer_name: sale.customer?.name || 'Walk-in Customer',
             total: Number(sale.total) || 0,
-            payment_method: sale.paymentMethod || 'CASH',
+            payment_method: pm,
             cashier_username: 'cashier',
             date: sale.date || new Date().toISOString(),
             synced_at: new Date().toISOString(),

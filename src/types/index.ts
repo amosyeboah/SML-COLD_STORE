@@ -87,6 +87,8 @@ export interface DashboardStats {
 
 export interface ReportsKPIs {
   totalSales: number
+  cashSales?: number
+  mobileSales?: number
   totalPurchases: number
   grossProfit: number
   transactions: number

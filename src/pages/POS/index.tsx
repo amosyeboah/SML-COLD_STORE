@@ -27,14 +27,28 @@ import {
   AlertCircle,
   Play,
   Split,
+  Printer,
 } from 'lucide-react'
 import type { Category, Customer } from '@/types'
 import { cn } from '@/utils'
 import { enqueueSyncItem } from '@/services/sync/syncQueue'
 
 export interface SplitPaymentEntry {
-  method: 'CASH' | 'MOBILE' | 'CARD' | 'BANK TRANSFER'
+  method: 'CASH' | 'MOBILE'
   amount: number
+}
+
+export interface PaymentConfirmedData {
+  saleId: string
+  total: number
+  paymentMethod: 'CASH' | 'MOBILE' | 'SPLIT'
+  payments: { method: string; amount: number }[]
+  cashTendered?: number | ''
+  changeDue: number
+  customerName: string
+  itemCount: number
+  receiptHTML: string
+  timestamp: string
 }
 
 interface CartItem {
@@ -246,12 +260,26 @@ function CartPanelContent({
   }
 
   const handleAddSplitMethod = () => {
-    if (splitPayments.length >= 4) return
+    if (splitPayments.length >= 2) return
     const usedMethods = new Set(splitPayments.map((p: any) => p.method))
-    const candidates: any[] = ['CASH', 'MOBILE', 'CARD', 'BANK TRANSFER']
-    const nextMethod = candidates.find((m) => !usedMethods.has(m)) || 'CARD'
+    const nextMethod = usedMethods.has('CASH') ? 'MOBILE' : 'CASH'
     const needed = Math.max(0, Math.round((total - allocatedTotal) * 100) / 100)
     setSplitPayments((prev: any[]) => [...prev, { method: nextMethod, amount: needed }])
+  }
+
+  const handleAddRemainder = (targetMethod: 'CASH' | 'MOBILE') => {
+    const remaining = Math.max(0, Math.round((total - allocatedTotal) * 100) / 100)
+    if (remaining <= 0) return
+    setSplitPayments((prev: any[]) => {
+      const idx = prev.findIndex((p: any) => p.method === targetMethod)
+      if (idx !== -1) {
+        return prev.map((item: any, i: number) =>
+          i === idx ? { ...item, amount: Math.round(((item.amount || 0) + remaining) * 100) / 100 } : item
+        )
+      } else {
+        return [...prev, { method: targetMethod, amount: remaining }]
+      }
+    })
   }
 
   const handleRemoveSplitRow = (index: number) => {
@@ -458,6 +486,59 @@ function CartPanelContent({
           </button>
         </div>
 
+        {/* Cash Tendered & Change Input */}
+        {paymentMethod === 'CASH' && (
+          <div className="mb-3 space-y-2 rounded-xl border border-emerald-200 bg-emerald-50/60 p-2.5 sm:p-3 animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between text-xs font-bold text-emerald-900">
+              <span className="flex items-center gap-1.5">
+                <Banknote className="h-4 w-4 text-emerald-600" />
+                Cash Tendered / Received
+              </span>
+              <button
+                type="button"
+                onClick={() => setCashTendered(total)}
+                className="rounded-md bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-700 hover:bg-emerald-200 transition-colors"
+              >
+                Exact ({currencySymbol}{total.toFixed(2)})
+              </button>
+            </div>
+            <div className="relative">
+              <span className="absolute left-2.5 top-1.5 text-xs font-bold text-slate-400">{currencySymbol}</span>
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                placeholder={total.toFixed(2)}
+                value={cashTendered}
+                onChange={(e) => setCashTendered(e.target.value === '' ? '' : Number(e.target.value))}
+                className="w-full rounded-lg border border-slate-200 bg-white py-1.5 pl-6 pr-2.5 text-right text-sm font-bold text-slate-800 outline-none focus:border-emerald-400"
+              />
+            </div>
+            {typeof cashTendered === 'number' && cashTendered > total && (
+              <div className="flex items-center justify-between rounded-lg bg-emerald-600 text-white px-3 py-1.5 text-xs font-bold shadow-xs">
+                <span>Change to Return:</span>
+                <span className="text-sm font-black">{currencySymbol}{(cashTendered - total).toFixed(2)}</span>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Mobile Payment Confirmation Banner */}
+        {paymentMethod === 'MOBILE' && (
+          <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50/70 p-2.5 sm:p-3 animate-in fade-in zoom-in-95 duration-150 text-xs">
+            <div className="flex items-center justify-between font-bold text-amber-900 mb-1">
+              <span className="flex items-center gap-1.5">
+                <Smartphone className="h-4 w-4 text-amber-600" />
+                Mobile Money (MoMo)
+              </span>
+              <span className="text-[10px] bg-amber-100 text-amber-800 px-2 py-0.5 rounded-full font-bold">Direct MoMo</span>
+            </div>
+            <p className="text-[11px] text-amber-700/90 leading-tight">
+              Collect <strong>{currencySymbol}{total.toFixed(2)}</strong> via MoMo prompt, merchant pay, or USSD transfer.
+            </p>
+          </div>
+        )}
+
         {/* Split Payment Breakdown Panel */}
         {paymentMethod === 'SPLIT' && (
           <div className="mb-3 space-y-2 rounded-xl border border-purple-200 bg-purple-50/60 p-2.5 sm:p-3 animate-in fade-in zoom-in-95 duration-150">
@@ -495,8 +576,6 @@ function CartPanelContent({
                   >
                     <option value="CASH">Cash</option>
                     <option value="MOBILE">Mobile Money</option>
-                    <option value="CARD">Card</option>
-                    <option value="BANK TRANSFER">Bank Transfer</option>
                   </select>
 
                   <div className="relative flex-1 min-w-0">
@@ -534,27 +613,45 @@ function CartPanelContent({
               ))}
             </div>
 
-            {splitPayments.length < 4 && (
+            {splitPayments.length < 2 && (
               <button
                 type="button"
                 onClick={handleAddSplitMethod}
                 className="w-full text-center py-1 rounded-lg border border-dashed border-purple-300 text-[11px] font-semibold text-purple-700 hover:bg-purple-100/60 transition-colors"
               >
-                + Add Another Method
+                + Add Mobile / Cash Split
               </button>
             )}
 
             {/* Split Status Bar */}
-            <div className="pt-1.5 border-t border-purple-200/60 space-y-1">
+            <div className="pt-1.5 border-t border-purple-200/60 space-y-1.5">
               <div className="flex items-center justify-between text-[11px]">
                 <span className="text-slate-500">Allocated / Total:</span>
                 <span className="font-bold text-slate-700">{currencySymbol}{allocatedTotal.toFixed(2)} / {currencySymbol}{total.toFixed(2)}</span>
               </div>
 
               {!isSplitBalanced && remainingToAllocate > 0 && (
-                <div className="flex items-center justify-between rounded-md bg-amber-100/80 px-2 py-1 text-[11px] font-bold text-amber-800">
-                  <span>Remaining to Allocate:</span>
-                  <span>{currencySymbol}{remainingToAllocate.toFixed(2)}</span>
+                <div className="rounded-md bg-amber-50 p-2 space-y-1.5 border border-amber-200">
+                  <div className="flex items-center justify-between text-[11px] font-bold text-amber-900">
+                    <span>Remaining to Allocate:</span>
+                    <span className="text-amber-800 font-extrabold">{currencySymbol}{remainingToAllocate.toFixed(2)}</span>
+                  </div>
+                  <div className="flex items-center gap-1.5 pt-0.5">
+                    <button
+                      type="button"
+                      onClick={() => handleAddRemainder('CASH')}
+                      className="flex-1 py-1 px-1.5 rounded-md bg-emerald-600 text-white font-bold text-[10px] hover:bg-emerald-700 active:scale-95 transition-all text-center shadow-xs"
+                    >
+                      + Add to Cash
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleAddRemainder('MOBILE')}
+                      className="flex-1 py-1 px-1.5 rounded-md bg-amber-500 text-white font-bold text-[10px] hover:bg-amber-600 active:scale-95 transition-all text-center shadow-xs"
+                    >
+                      + Add to Mobile
+                    </button>
+                  </div>
                 </div>
               )}
 
@@ -684,6 +781,7 @@ export default function POS() {
   const [isHeldModalOpen, setIsHeldModalOpen] = useState(false)
   const [isCartDrawerOpen, setIsCartDrawerOpen] = useState(false)
   const [toast, setToast] = useState<ToastMessage | null>(null)
+  const [confirmedPayment, setConfirmedPayment] = useState<PaymentConfirmedData | null>(null)
   const searchRef = useRef<HTMLInputElement>(null)
 
   // Auto-dismiss toasts
@@ -866,7 +964,7 @@ export default function POS() {
           id: sale.id,
           total,
           paymentMethod: isSplit
-            ? `SPLIT (${activePayments.map((p) => p.method).join('+')})`
+            ? `SPLIT:CASH=${activePayments.filter((p) => p.method === 'CASH').reduce((sum, p) => sum + p.amount, 0)},MOBILE=${activePayments.filter((p) => p.method === 'MOBILE').reduce((sum, p) => sum + p.amount, 0)}`
             : paymentMethod,
           payments: activePayments,
           date: new Date().toISOString(),
@@ -884,6 +982,26 @@ export default function POS() {
         console.warn('Sync enqueue notice:', syncErr)
       }
 
+      const finalChangeDue = typeof cashTendered === 'number'
+        ? Math.max(0, cashTendered - (isSplit ? (activePayments.find((p) => p.method === 'CASH')?.amount || 0) : (paymentMethod === 'CASH' ? total : 0)))
+        : 0
+
+      const custName = customers.find((c) => c.id === selectedCustomerId)?.name || 'Walk-in Customer'
+      const totalCartons = cart.reduce((sum, item) => sum + item.quantity, 0)
+
+      setConfirmedPayment({
+        saleId: sale.id,
+        total,
+        paymentMethod,
+        payments: activePayments,
+        cashTendered: typeof cashTendered === 'number' && cashTendered > 0 ? cashTendered : undefined,
+        changeDue: finalChangeDue,
+        customerName: custName,
+        itemCount: totalCartons,
+        receiptHTML,
+        timestamp: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
+      })
+
       setCart([])
       setDiscountPercent(0)
       setSelectedCustomerId('')
@@ -894,7 +1012,7 @@ export default function POS() {
         { method: 'MOBILE', amount: 0 },
       ])
       setIsCartDrawerOpen(false)
-      setToast({ type: 'success', message: 'Sale checkout completed successfully!' })
+      setToast({ type: 'success', message: 'Payment confirmed & receipt processed!' })
     },
     onError: (err: any) => {
       setToast({ type: 'error', message: err?.message || 'Sale checkout failed' })
@@ -1079,11 +1197,18 @@ export default function POS() {
     )
 
     const activePayments = paymentMethod === 'SPLIT'
-      ? splitPayments.filter((p) => p.amount > 0).map((p) => ({ method: p.method, amount: p.amount }))
-      : [{ method: paymentMethod, amount: total }]
+      ? splitPayments.filter((p) => p.amount > 0).map((p) => ({
+          method: (p.method || '').toUpperCase().includes('MOBILE') ? ('MOBILE' as const) : ('CASH' as const),
+          amount: Number(p.amount) || 0,
+        }))
+      : [{ method: paymentMethod === 'MOBILE' ? ('MOBILE' as const) : ('CASH' as const), amount: total }]
+
+    const cashAmt = activePayments.filter((p) => p.method === 'CASH').reduce((sum, p) => sum + p.amount, 0)
+    const mobileAmt = activePayments.filter((p) => p.method === 'MOBILE').reduce((sum, p) => sum + p.amount, 0)
+    const finalMethod = paymentMethod === 'SPLIT' ? `SPLIT:CASH=${cashAmt},MOBILE=${mobileAmt}` : paymentMethod
 
     createSaleMutation.mutate({
-      paymentMethod,
+      paymentMethod: finalMethod,
       payments: activePayments,
       total,
       items,
@@ -1103,6 +1228,20 @@ export default function POS() {
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
+      if (confirmedPayment) {
+        if (e.key === 'Enter' || e.key === 'Escape') {
+          e.preventDefault()
+          setConfirmedPayment(null)
+          return
+        }
+        if (e.key === 'p' || e.key === 'P') {
+          e.preventDefault()
+          window.api.printReceipt(confirmedPayment.receiptHTML)
+          setToast({ type: 'success', message: 'Receipt print sent' })
+          return
+        }
+      }
+
       if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
         e.preventDefault()
         searchRef.current?.focus()
@@ -1122,7 +1261,7 @@ export default function POS() {
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [cart])
+  }, [cart, confirmedPayment])
 
   return (
     <div className="flex h-full flex-col bg-[#f8f9fb] font-sans">
@@ -1140,6 +1279,140 @@ export default function POS() {
           <button onClick={() => setToast(null)} className="ml-2 text-slate-400 hover:text-slate-600">
             <X className="h-3.5 w-3.5" />
           </button>
+        </div>
+      )}
+
+      {/* ── High-Visibility Payment Confirmation Modal ── */}
+      {confirmedPayment && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4 backdrop-blur-md animate-in fade-in duration-150">
+          <div className="relative w-full max-w-md overflow-hidden rounded-3xl bg-white shadow-2xl border border-slate-100 animate-in zoom-in-95 duration-150">
+            {/* Top decorative banner with close button */}
+            <div className="relative bg-gradient-to-br from-emerald-500 via-teal-500 to-emerald-600 px-6 pt-8 pb-10 text-center text-white">
+              <button
+                type="button"
+                onClick={() => setConfirmedPayment(null)}
+                className="absolute right-4 top-4 rounded-full bg-white/20 p-1.5 text-white hover:bg-white/30 transition-colors"
+                title="Close (Esc)"
+              >
+                <X className="h-5 w-5" />
+              </button>
+
+              <div className="mx-auto mb-3 flex h-20 w-20 items-center justify-center rounded-full bg-white text-emerald-600 shadow-xl ring-8 ring-white/30 animate-bounce duration-700">
+                <CheckCircle2 className="h-12 w-12 text-emerald-600 stroke-[2.5]" />
+              </div>
+
+              <h2 className="text-2xl font-black tracking-tight text-white sm:text-3xl">Payment Confirmed!</h2>
+              <p className="mt-1 text-xs font-semibold text-emerald-100">
+                Sale completed successfully • INV-{confirmedPayment.saleId.slice(0, 8).toUpperCase()}
+              </p>
+            </div>
+
+            {/* Content area */}
+            <div className="p-6 space-y-4">
+              {/* Grand Total Paid Box */}
+              <div className="rounded-2xl bg-slate-50 border border-slate-200/80 p-4 text-center">
+                <p className="text-[11px] font-bold uppercase tracking-wider text-slate-500">Total Amount Paid</p>
+                <p className="text-3xl sm:text-4xl font-black text-slate-900 mt-0.5 tracking-tight">
+                  {currencySymbol}{confirmedPayment.total.toFixed(2)}
+                </p>
+              </div>
+
+              {/* High-visibility Change Due Banner */}
+              {confirmedPayment.changeDue > 0 && (
+                <div className="rounded-2xl bg-gradient-to-r from-emerald-600 to-teal-600 text-white p-4 shadow-lg shadow-emerald-600/20 flex items-center justify-between">
+                  <div>
+                    <p className="text-[11px] font-extrabold uppercase tracking-wider text-emerald-200">Change Due to Customer</p>
+                    <p className="text-2xl sm:text-3xl font-black tracking-tight mt-0.5">
+                      {currencySymbol}{confirmedPayment.changeDue.toFixed(2)}
+                    </p>
+                  </div>
+                  <div className="rounded-xl bg-white/20 p-2.5 backdrop-blur-xs">
+                    <Banknote className="h-8 w-8 text-white" />
+                  </div>
+                </div>
+              )}
+
+              {/* Transaction details card */}
+              <div className="rounded-2xl border border-slate-100 bg-slate-50/70 p-3.5 space-y-2 text-xs">
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-500 font-medium">Payment Mode</span>
+                  {confirmedPayment.paymentMethod === 'CASH' && (
+                    <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2.5 py-0.5 font-bold text-emerald-800 text-[11px]">
+                      <Banknote className="h-3.5 w-3.5" /> Cash
+                    </span>
+                  )}
+                  {confirmedPayment.paymentMethod === 'MOBILE' && (
+                    <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2.5 py-0.5 font-bold text-amber-800 text-[11px]">
+                      <Smartphone className="h-3.5 w-3.5" /> Mobile Money
+                    </span>
+                  )}
+                  {confirmedPayment.paymentMethod === 'SPLIT' && (
+                    <span className="inline-flex items-center gap-1 rounded-full bg-purple-100 px-2.5 py-0.5 font-bold text-purple-800 text-[11px]">
+                      <Split className="h-3.5 w-3.5" /> Split (Cash + Mobile)
+                    </span>
+                  )}
+                </div>
+
+                {confirmedPayment.paymentMethod === 'SPLIT' && (
+                  <div className="pl-3 border-l-2 border-purple-300 space-y-1 text-[11px] text-slate-600 py-0.5">
+                    {confirmedPayment.payments.map((p, i) => (
+                      <div key={i} className="flex justify-between">
+                        <span>• {p.method === 'MOBILE' ? 'Mobile Money' : 'Cash'}:</span>
+                        <span className="font-bold text-slate-800">{currencySymbol}{p.amount.toFixed(2)}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {typeof confirmedPayment.cashTendered === 'number' && confirmedPayment.cashTendered > 0 && (
+                  <div className="flex items-center justify-between text-slate-600">
+                    <span className="text-slate-500 font-medium">Cash Tendered</span>
+                    <span className="font-bold text-slate-800">{currencySymbol}{confirmedPayment.cashTendered.toFixed(2)}</span>
+                  </div>
+                )}
+
+                <div className="flex items-center justify-between text-slate-600">
+                  <span className="text-slate-500 font-medium">Customer</span>
+                  <span className="font-semibold text-slate-800">{confirmedPayment.customerName}</span>
+                </div>
+
+                <div className="flex items-center justify-between text-slate-600">
+                  <span className="text-slate-500 font-medium">Quantity Sold</span>
+                  <span className="font-semibold text-slate-800">{confirmedPayment.itemCount} carton(s)</span>
+                </div>
+
+                <div className="flex items-center justify-between text-slate-600">
+                  <span className="text-slate-500 font-medium">Time Completed</span>
+                  <span className="font-semibold text-slate-800">{confirmedPayment.timestamp}</span>
+                </div>
+              </div>
+
+              {/* Action Buttons */}
+              <div className="grid grid-cols-2 gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={async () => {
+                    await window.api.printReceipt(confirmedPayment.receiptHTML)
+                    setToast({ type: 'success', message: 'Receipt print sent' })
+                  }}
+                  className="flex items-center justify-center gap-2 rounded-2xl border border-slate-300 bg-white py-3.5 text-xs sm:text-sm font-bold text-slate-700 shadow-sm hover:bg-slate-50 active:scale-95 transition-all"
+                >
+                  <Printer className="h-4 w-4 text-slate-600" />
+                  Print Receipt
+                </button>
+
+                <button
+                  type="button"
+                  autoFocus
+                  onClick={() => setConfirmedPayment(null)}
+                  className="flex items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-emerald-600 to-teal-600 py-3.5 text-xs sm:text-sm font-bold text-white shadow-lg shadow-emerald-600/30 hover:opacity-95 active:scale-95 transition-all"
+                >
+                  <CheckCircle2 className="h-4 w-4" />
+                  Next Sale (Enter)
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
       )}
 

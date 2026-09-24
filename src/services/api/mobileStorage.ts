@@ -110,13 +110,38 @@ export async function fetchCloudSalesIfAvailable(): Promise<any[]> {
 
     const mappedSales = cloudSales.map((s: any) => {
       const relatedItems = cloudItems.filter((i: any) => i.sale_id === s.id)
+      const pm = (s.payment_method || 'CASH').toUpperCase()
+      const totalAmt = Number(s.total) || 0
+
+      let payments: any[] = []
+      if (pm.startsWith('SPLIT:')) {
+        const cashMatch = pm.match(/CASH[=:]\s*([0-9.]+)/i)
+        const mobileMatch = pm.match(/MOBILE[=:]\s*([0-9.]+)/i)
+        const c = cashMatch ? parseFloat(cashMatch[1]) : 0
+        const m = mobileMatch ? parseFloat(mobileMatch[1]) : 0
+        payments = [
+          { method: 'CASH', amount: c },
+          { method: 'MOBILE', amount: m },
+        ]
+      } else if (pm === 'SPLIT') {
+        payments = [
+          { method: 'CASH', amount: totalAmt / 2 },
+          { method: 'MOBILE', amount: totalAmt / 2 },
+        ]
+      } else if (pm.includes('MOBILE') || pm.includes('MOMO')) {
+        payments = [{ method: 'MOBILE', amount: totalAmt }]
+      } else {
+        payments = [{ method: 'CASH', amount: totalAmt }]
+      }
+
       return {
         id: s.id,
         saleNumber: s.sale_number || `INV-${String(s.id).slice(0, 8).toUpperCase()}`,
         customerId: null,
         customerName: s.customer_name || 'Walk-in Customer',
         paymentMethod: s.payment_method || 'CASH',
-        total: Number(s.total) || 0,
+        payments,
+        total: totalAmt,
         date: s.date || s.created_at,
         cashier: s.cashier_username || 'cashier',
         items: relatedItems.map((item: any) => ({
@@ -644,41 +669,75 @@ export const mobileApi = {
     const salesOverviewData: { day: string; sales: number }[] = []
     salesByDay.forEach((daySales, day) => salesOverviewData.push({ day, sales: daySales }))
 
-    // Payment Breakdown
-    const paymentTotals = new Map<string, number>()
+    // Payment Breakdown (Strictly Cash & Mobile Money)
+    let mtdCash = 0
+    let mtdMobile = 0
     for (const sale of mtdSales) {
       if (sale.payments && Array.isArray(sale.payments) && sale.payments.length > 0) {
         for (const p of sale.payments) {
           const method = (p.method || 'CASH').toUpperCase()
-          paymentTotals.set(method, (paymentTotals.get(method) || 0) + (p.amount || 0))
+          if (method.includes('MOBILE') || method.includes('MOMO')) {
+            mtdMobile += Number(p.amount) || 0
+          } else {
+            mtdCash += Number(p.amount) || 0
+          }
         }
       } else {
-        const method = (sale.paymentMethod || 'CASH').toUpperCase()
-        paymentTotals.set(method, (paymentTotals.get(method) || 0) + (sale.total || 0))
+        const pm = (sale.paymentMethod || 'CASH').toUpperCase()
+        const tot = Number(sale.total) || 0
+        if (pm.startsWith('SPLIT:')) {
+          const cashMatch = pm.match(/CASH[=:]\s*([0-9.]+)/i)
+          const mobileMatch = pm.match(/MOBILE[=:]\s*([0-9.]+)/i)
+          const c = cashMatch ? parseFloat(cashMatch[1]) : 0
+          const m = mobileMatch ? parseFloat(mobileMatch[1]) : 0
+          if (c > 0 || m > 0) {
+            mtdCash += c
+            mtdMobile += m
+          } else {
+            mtdCash += tot / 2
+            mtdMobile += tot / 2
+          }
+        } else if (pm === 'SPLIT') {
+          mtdCash += tot / 2
+          mtdMobile += tot / 2
+        } else if (pm.includes('MOBILE') || pm.includes('MOMO')) {
+          mtdMobile += tot
+        } else {
+          mtdCash += tot
+        }
       }
     }
-    const paymentData: any[] = []
-    paymentTotals.forEach((value, method) => {
-      paymentData.push({
-        name: PAYMENT_LABELS[method] || method,
-        value,
-        percent: mtdRevenue > 0 ? Math.round((value / mtdRevenue) * 100) : 0,
-        color: PAYMENT_COLORS[method] || '#94a3b8'
-      })
-    })
-    paymentData.sort((a, b) => b.value - a.value)
+
+    const paymentData = [
+      {
+        name: 'Cash',
+        value: mtdCash,
+        percent: mtdRevenue > 0 ? Math.round((mtdCash / mtdRevenue) * 100) : 0,
+        color: '#22c55e'
+      },
+      {
+        name: 'Mobile Money',
+        value: mtdMobile,
+        percent: mtdRevenue > 0 ? Math.round((mtdMobile / mtdRevenue) * 100) : 0,
+        color: '#f59e0b'
+      }
+    ]
 
     // Top Medicines (MTD)
     const medicineTotals = new Map<string, { name: string; qty: number; revenue: number }>()
     for (const sale of mtdSales) {
       for (const item of (sale.items || [])) {
         const batch = batches.find(b => b.id === item.batchId)
-        const med = medicines.find(m => m.id === (batch?.medicineId || item.medicineId))
-        const name = item.medicine?.name || item.name || med?.name || 'Cold Store Item'
-        const existing = medicineTotals.get(name) || { name, qty: 0, revenue: 0 }
+        const med = medicines.find(m => m.id === (batch?.medicineId || item.medicineId) || (item.name && m.name.toLowerCase() === item.name.toLowerCase()))
+        const medId = med?.id || item.medicineId || item.name || 'unknown'
+        const currentName = med?.name || item.medicine?.name || item.name || 'Cold Store Item'
+        const existing = medicineTotals.get(medId) || { name: currentName, qty: 0, revenue: 0 }
+        if (med?.name) {
+          existing.name = med.name
+        }
         existing.qty += (item.quantity || 0)
         existing.revenue += (item.price || 0) * (item.quantity || 0)
-        medicineTotals.set(name, existing)
+        medicineTotals.set(medId, existing)
       }
     }
     const topMedicines = Array.from(medicineTotals.values())
@@ -852,6 +911,7 @@ export const mobileApi = {
     const idx = medicines.findIndex(m => m.id === id)
     if (idx !== -1) {
       const cat = categories.find(c => c.id === data.categoryId) || categories.find(c => c.id === medicines[idx].categoryId)
+      const oldName = medicines[idx].name
       medicines[idx] = {
         ...medicines[idx],
         ...data,
@@ -859,6 +919,24 @@ export const mobileApi = {
       }
       setItem(STORAGE_KEYS.MEDICINES, medicines)
       enqueueSyncItem('PRODUCT', 'UPDATE', medicines[idx])
+
+      // Also propagate the updated product name to existing local sales so historical views reflect the new name immediately
+      const sales = getItem<any[]>(STORAGE_KEYS.SALES, [])
+      let salesModified = false
+      sales.forEach((s) => {
+        (s.items || []).forEach((item: any) => {
+          if (item.medicineId === id || item.batchId === id || (oldName && item.name === oldName)) {
+            item.name = medicines[idx].name
+            if (item.medicine) {
+              item.medicine.name = medicines[idx].name
+            }
+            salesModified = true
+          }
+        })
+      })
+      if (salesModified) {
+        setItem(STORAGE_KEYS.SALES, sales)
+      }
 
       const client = getSupabaseClient()
       if (client && navigator.onLine) {
@@ -875,6 +953,11 @@ export const mobileApi = {
           min_stock_level: Number(medicines[idx].minStockLevel) || 10,
           updated_at: new Date().toISOString()
         }).then(() => {}).catch(() => {})
+
+        // Also update historical cloud_sale_items with the new product_name
+        client.from('cloud_sale_items').update({
+          product_name: medicines[idx].name
+        }).eq('product_id', id).then(() => {}).catch(() => {})
       }
       return medicines[idx]
     }
@@ -1051,12 +1134,27 @@ export const mobileApi = {
     const finalTotal = data.total !== undefined ? data.total : computedTotal
 
     const paymentRecords = data.payments && data.payments.length > 0
-      ? data.payments.map((p) => ({ id: generateId(), saleId, method: p.method, amount: p.amount }))
-      : [{ id: generateId(), saleId, method: data.paymentMethod || 'CASH', amount: finalTotal }]
+      ? data.payments.map((p) => ({
+          id: generateId(),
+          saleId,
+          method: (p.method || '').toUpperCase().includes('MOBILE') || (p.method || '').toUpperCase().includes('MOMO') ? 'MOBILE' : 'CASH',
+          amount: Number(p.amount) || 0
+        }))
+      : [{
+          id: generateId(),
+          saleId,
+          method: (data.paymentMethod || '').toUpperCase().includes('MOBILE') ? 'MOBILE' : 'CASH',
+          amount: finalTotal
+        }]
 
-    const primaryPaymentMethod = data.payments && data.payments.length > 1
-      ? 'SPLIT'
-      : (data.payments?.[0]?.method || data.paymentMethod || 'CASH')
+    let primaryPaymentMethod = 'CASH'
+    if (data.payments && data.payments.length > 1) {
+      const cashAmt = paymentRecords.filter(p => p.method === 'CASH').reduce((sum, p) => sum + p.amount, 0)
+      const mobileAmt = paymentRecords.filter(p => p.method === 'MOBILE').reduce((sum, p) => sum + p.amount, 0)
+      primaryPaymentMethod = `SPLIT:CASH=${cashAmt},MOBILE=${mobileAmt}`
+    } else {
+      primaryPaymentMethod = paymentRecords[0]?.method || (data.paymentMethod || 'CASH').toUpperCase()
+    }
 
     const customerObj = customers.find(c => c.id === data.customerId)
 
@@ -1309,40 +1407,73 @@ export const mobileApi = {
       }
     })
 
-    const paymentTotals = new Map<string, number>()
+    let cashTotal = 0
+    let mobileTotal = 0
     for (const sale of sales) {
       if (sale.payments && Array.isArray(sale.payments) && sale.payments.length > 0) {
         for (const p of sale.payments) {
           const method = (p.method || 'CASH').toUpperCase()
-          paymentTotals.set(method, (paymentTotals.get(method) || 0) + (p.amount || 0))
+          if (method.includes('MOBILE') || method.includes('MOMO')) {
+            mobileTotal += Number(p.amount) || 0
+          } else {
+            cashTotal += Number(p.amount) || 0
+          }
         }
       } else {
-        const method = (sale.paymentMethod || 'CASH').toUpperCase()
-        paymentTotals.set(method, (paymentTotals.get(method) || 0) + (sale.total || 0))
+        const pm = (sale.paymentMethod || 'CASH').toUpperCase()
+        const tot = Number(sale.total) || 0
+        if (pm.startsWith('SPLIT:')) {
+          const cashMatch = pm.match(/CASH[=:]\s*([0-9.]+)/i)
+          const mobileMatch = pm.match(/MOBILE[=:]\s*([0-9.]+)/i)
+          const c = cashMatch ? parseFloat(cashMatch[1]) : 0
+          const m = mobileMatch ? parseFloat(mobileMatch[1]) : 0
+          if (c > 0 || m > 0) {
+            cashTotal += c
+            mobileTotal += m
+          } else {
+            cashTotal += tot / 2
+            mobileTotal += tot / 2
+          }
+        } else if (pm === 'SPLIT') {
+          cashTotal += tot / 2
+          mobileTotal += tot / 2
+        } else if (pm.includes('MOBILE') || pm.includes('MOMO')) {
+          mobileTotal += tot
+        } else {
+          cashTotal += tot
+        }
       }
     }
 
-    const paymentBreakdown: any[] = []
-    paymentTotals.forEach((value, method) => {
-      paymentBreakdown.push({
-        name: PAYMENT_LABELS[method] || method,
-        value,
-        percent: totalSales > 0 ? (value / totalSales) * 100 : 0,
-        color: PAYMENT_COLORS[method] || '#94a3b8',
-      })
-    })
-    paymentBreakdown.sort((a, b) => b.value - a.value)
+    const paymentBreakdown = [
+      {
+        name: 'Cash',
+        value: cashTotal,
+        percent: totalSales > 0 ? (cashTotal / totalSales) * 100 : 0,
+        color: '#22c55e',
+      },
+      {
+        name: 'Mobile Money',
+        value: mobileTotal,
+        percent: totalSales > 0 ? (mobileTotal / totalSales) * 100 : 0,
+        color: '#f59e0b',
+      },
+    ]
 
     const medicineTotals = new Map<string, { name: string; qty: number; revenue: number }>()
     for (const sale of sales) {
       for (const item of (sale.items || [])) {
         const batch = allBatches.find(b => b.id === item.batchId)
-        const med = allMedicines.find(m => m.id === (batch?.medicineId || item.medicineId))
-        const name = med?.name || item.name || 'Unknown Item'
-        const existing = medicineTotals.get(name) || { name, qty: 0, revenue: 0 }
+        const med = allMedicines.find(m => m.id === (batch?.medicineId || item.medicineId) || (item.name && m.name.toLowerCase() === item.name.toLowerCase()))
+        const medId = med?.id || item.medicineId || item.name || 'unknown'
+        const currentName = med?.name || item.name || 'Unknown Item'
+        const existing = medicineTotals.get(medId) || { name: currentName, qty: 0, revenue: 0 }
+        if (med?.name) {
+          existing.name = med.name
+        }
         existing.qty += (item.quantity || 0)
         existing.revenue += (item.price || 0) * (item.quantity || 0)
-        medicineTotals.set(name, existing)
+        medicineTotals.set(medId, existing)
       }
     }
 
@@ -1351,9 +1482,24 @@ export const mobileApi = {
       .slice(0, 5)
 
     const recentTransactions = sales.slice(0, 8).map((sale) => {
-      let paymentLabel = PAYMENT_LABELS[(sale.paymentMethod || '').toUpperCase()] || sale.paymentMethod || 'Cash'
-      if ((sale.paymentMethod || '').toUpperCase() === 'SPLIT' && sale.payments && sale.payments.length > 0) {
-        paymentLabel = `Split (${sale.payments.map((p: any) => PAYMENT_LABELS[(p.method || '').toUpperCase()] || p.method).join(' + ')})`
+      let paymentLabel = 'Cash'
+      const pm = (sale.paymentMethod || '').toUpperCase()
+      if (sale.payments && Array.isArray(sale.payments) && sale.payments.length > 1) {
+        const parts = sale.payments.map((p: any) => {
+          const m = (p.method || '').toUpperCase().includes('MOBILE') ? 'Mobile' : 'Cash'
+          return `${m}: GH₵${Number(p.amount).toFixed(2)}`
+        })
+        paymentLabel = `Split (${parts.join(' + ')})`
+      } else if (pm.startsWith('SPLIT:')) {
+        const cashMatch = pm.match(/CASH[=:]\s*([0-9.]+)/i)
+        const mobileMatch = pm.match(/MOBILE[=:]\s*([0-9.]+)/i)
+        const c = cashMatch ? parseFloat(cashMatch[1]) : 0
+        const m = mobileMatch ? parseFloat(mobileMatch[1]) : 0
+        paymentLabel = `Split (Cash: GH₵${c.toFixed(2)} + Mobile: GH₵${m.toFixed(2)})`
+      } else if (pm.includes('MOBILE') || pm.includes('MOMO')) {
+        paymentLabel = 'Mobile Money'
+      } else {
+        paymentLabel = 'Cash'
       }
       return {
         id: `INV-${String(sale.id).slice(0, 8).toUpperCase()}`,
@@ -1386,6 +1532,8 @@ export const mobileApi = {
     return {
       kpis: {
         totalSales,
+        cashSales: cashTotal,
+        mobileSales: mobileTotal,
         totalPurchases,
         grossProfit,
         transactions,
@@ -1416,6 +1564,8 @@ export const mobileApi = {
         'Report Summary',
         `Date Range,${startDate} to ${endDate}`,
         `Total Sales,${data.kpis.totalSales}`,
+        `Total Cash Sales,${data.kpis.cashSales ?? 0}`,
+        `Total Mobile Money Sales,${data.kpis.mobileSales ?? 0}`,
         `Total Purchases,${data.kpis.totalPurchases}`,
         `Gross Profit,${data.kpis.grossProfit}`,
         `Transactions,${data.kpis.transactions}`,
@@ -1594,5 +1744,13 @@ export const mobileApi = {
     setItem(STORAGE_KEYS.AUDIT_LOGS, logs.slice(0, 500))
     enqueueSyncItem('AUDIT_LOG', 'INSERT', newLog)
     return { success: true }
+  },
+
+  // Cloud Sync Backend Credentials (.env / Environment)
+  getCloudCredentials: async () => {
+    return {
+      url: (import.meta as any).env?.VITE_SUPABASE_URL || 'https://yhglbervaljjkmttzonk.supabase.co',
+      anonKey: (import.meta as any).env?.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InloZ2xiZXJ2YWxqamttdHR6b25rIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTAwNDA4MzIsImV4cCI6MjEwNTYxNjgzMn0.8STKvBtPKL3J9BH7Mdvadrna-zcYYFqGXGaBx4y_Wis',
+    }
   }
 }

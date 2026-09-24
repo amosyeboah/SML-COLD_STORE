@@ -28,6 +28,8 @@ import {
   CreditCard,
   Users,
   Loader2,
+  Banknote,
+  Smartphone,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -156,23 +158,19 @@ function getPaymentMethodColor(method: string) {
   if (m.includes('split')) {
     return 'bg-purple-50 text-purple-700 border border-purple-200'
   }
-  switch (m) {
-    case 'cash':
-      return 'bg-emerald-50 text-emerald-700'
-    case 'mobile money':
-      return 'bg-amber-50 text-amber-700'
-    case 'card':
-      return 'bg-blue-50 text-blue-700'
-    case 'bank transfer':
-      return 'bg-purple-50 text-purple-700'
-    default:
-      return 'bg-gray-50 text-gray-700'
+  if (m.includes('mobile') || m.includes('momo')) {
+    return 'bg-amber-50 text-amber-700 border border-amber-200'
   }
+  return 'bg-emerald-50 text-emerald-700 border border-emerald-200'
 }
 
 function buildKpiCards(data?: ReportsData | null) {
   const kpis = data?.kpis
   if (!kpis) return []
+
+  const cashSalesVal = kpis.cashSales ?? (data?.paymentBreakdown?.find(p => p.name.toLowerCase().includes('cash'))?.value ?? 0)
+  const mobileSalesVal = kpis.mobileSales ?? (data?.paymentBreakdown?.find(p => p.name.toLowerCase().includes('mobile'))?.value ?? 0)
+
   return [
     {
       title: 'Total Sales',
@@ -185,13 +183,33 @@ function buildKpiCards(data?: ReportsData | null) {
       sparkData: kpis.salesSparkline ?? [],
     },
     {
+      title: 'Cash Sales',
+      value: formatCurrency(cashSalesVal),
+      trend: `${kpis.totalSales > 0 ? ((cashSalesVal / kpis.totalSales) * 100).toFixed(1) : '0'}% of sales`,
+      icon: Banknote,
+      iconBg: 'bg-emerald-100',
+      iconColor: 'text-emerald-600',
+      sparkColor: '#22c55e',
+      sparkData: [],
+    },
+    {
+      title: 'Mobile Money',
+      value: formatCurrency(mobileSalesVal),
+      trend: `${kpis.totalSales > 0 ? ((mobileSalesVal / kpis.totalSales) * 100).toFixed(1) : '0'}% of sales`,
+      icon: Smartphone,
+      iconBg: 'bg-amber-100',
+      iconColor: 'text-amber-600',
+      sparkColor: '#f59e0b',
+      sparkData: [],
+    },
+    {
       title: 'Total Purchases',
       value: formatCurrency(kpis.totalPurchases ?? 0),
       trend: formatTrend(kpis.purchasesTrend ?? 0),
       icon: ShoppingBag,
-      iconBg: 'bg-emerald-100',
-      iconColor: 'text-emerald-600',
-      sparkColor: '#22c55e',
+      iconBg: 'bg-teal-100',
+      iconColor: 'text-teal-600',
+      sparkColor: '#14b8a6',
       sparkData: kpis.purchasesSparkline ?? [],
     },
     {
@@ -392,22 +410,28 @@ export default function Reports() {
           ) : (
             <>
               {shouldShowSection(activeReport, 'kpis') && (
-                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-5">
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7">
                   {kpiCards.map((card) => {
                     const Icon = card.icon
                     return (
-                      <div key={card.title} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-                        <div className="mb-2 flex items-start justify-between">
-                          <div>
-                            <p className="text-xs font-medium text-slate-500">{card.title}</p>
-                            <p className="mt-1 text-xl font-bold text-slate-900">{card.value}</p>
+                      <div key={card.title} className="rounded-xl border border-slate-200 bg-white p-3.5 shadow-sm flex flex-col justify-between">
+                        <div>
+                          <div className="mb-2 flex items-start justify-between">
+                            <p className="text-[11px] font-medium text-slate-500">{card.title}</p>
+                            <div className={cn('flex h-8 w-8 items-center justify-center rounded-lg', card.iconBg)}>
+                              <Icon className={cn('h-4 w-4', card.iconColor)} />
+                            </div>
                           </div>
-                          <div className={cn('flex h-9 w-9 items-center justify-center rounded-lg', card.iconBg)}>
-                            <Icon className={cn('h-4 w-4', card.iconColor)} />
-                          </div>
+                          <p className="text-lg font-bold text-slate-900 truncate">{card.value}</p>
                         </div>
-                        <p className="mb-1 text-xs font-semibold text-emerald-600">{card.trend} vs last period</p>
-                        <Sparkline data={card.sparkData} color={card.sparkColor} />
+                        <div className="mt-2">
+                          <p className="text-[10px] font-semibold text-slate-500">{card.trend}</p>
+                          {card.sparkData && card.sparkData.length > 0 ? (
+                            <Sparkline data={card.sparkData} color={card.sparkColor} />
+                          ) : (
+                            <div className="h-2" />
+                          )}
+                        </div>
                       </div>
                     )
                   })}
@@ -481,41 +505,69 @@ export default function Reports() {
                           No payment data for this period.
                         </div>
                       ) : (
-                        <div className="flex items-center gap-4">
-                          <div className="relative flex-shrink-0" style={{ width: 130, height: 130 }}>
-                            <PieChart width={130} height={130}>
-                              <Pie
-                                data={data.paymentBreakdown || []}
-                                cx={60}
-                                cy={60}
-                                innerRadius={38}
-                                outerRadius={58}
-                                dataKey="value"
-                                strokeWidth={2}
-                                stroke="#fff"
-                              >
-                                {(data.paymentBreakdown || []).map((entry) => (
-                                  <Cell key={entry.name} fill={entry.color} />
-                                ))}
-                              </Pie>
-                            </PieChart>
-                            <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
-                              <p className="text-[10px] font-medium text-slate-400">Total</p>
-                              <p className="text-sm font-bold text-slate-900">{formatCurrency(totalPayment)}</p>
+                        <div className="space-y-3.5">
+                          {/* Dedicated Cash and Mobile summary tiles */}
+                          <div className="grid grid-cols-2 gap-2">
+                            <div className="rounded-lg border border-emerald-200 bg-emerald-50/70 p-2.5 flex items-center gap-2">
+                              <div className="flex h-7 w-7 items-center justify-center rounded-md bg-emerald-600 text-white flex-shrink-0">
+                                <Banknote className="h-3.5 w-3.5" />
+                              </div>
+                              <div className="min-w-0">
+                                <p className="text-[10px] font-bold text-emerald-800 uppercase tracking-wider">Cash Total</p>
+                                <p className="text-xs font-black text-emerald-950 truncate">
+                                  {formatCurrency(data.paymentBreakdown?.find(p => p.name.toLowerCase().includes('cash'))?.value ?? data.kpis?.cashSales ?? 0)}
+                                </p>
+                              </div>
+                            </div>
+                            <div className="rounded-lg border border-amber-200 bg-amber-50/70 p-2.5 flex items-center gap-2">
+                              <div className="flex h-7 w-7 items-center justify-center rounded-md bg-amber-500 text-white flex-shrink-0">
+                                <Smartphone className="h-3.5 w-3.5" />
+                              </div>
+                              <div className="min-w-0">
+                                <p className="text-[10px] font-bold text-amber-800 uppercase tracking-wider">Mobile Total</p>
+                                <p className="text-xs font-black text-amber-950 truncate">
+                                  {formatCurrency(data.paymentBreakdown?.find(p => p.name.toLowerCase().includes('mobile'))?.value ?? data.kpis?.mobileSales ?? 0)}
+                                </p>
+                              </div>
                             </div>
                           </div>
-                          <div className="min-w-0 flex-1 space-y-2">
-                            {(data.paymentBreakdown || []).map((item) => (
-                              <div key={item.name} className="flex items-center justify-between gap-2 text-xs">
-                                <div className="flex min-w-0 items-center gap-1.5">
-                                  <span className="h-2 w-2 flex-shrink-0 rounded-full" style={{ background: item.color }} />
-                                  <span className="truncate text-slate-600">{item.name}</span>
-                                </div>
-                                <span className="flex-shrink-0 font-semibold text-slate-800">
-                                  {formatCurrency(item.value)} {(item.percent ?? 0).toFixed(1)}%
-                                </span>
+
+                          <div className="flex items-center gap-4">
+                            <div className="relative flex-shrink-0" style={{ width: 120, height: 120 }}>
+                              <PieChart width={120} height={120}>
+                                <Pie
+                                  data={data.paymentBreakdown || []}
+                                  cx={55}
+                                  cy={55}
+                                  innerRadius={36}
+                                  outerRadius={54}
+                                  dataKey="value"
+                                  strokeWidth={2}
+                                  stroke="#fff"
+                                >
+                                  {(data.paymentBreakdown || []).map((entry) => (
+                                    <Cell key={entry.name} fill={entry.color} />
+                                  ))}
+                                </Pie>
+                              </PieChart>
+                              <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
+                                <p className="text-[9px] font-medium text-slate-400">Total</p>
+                                <p className="text-xs font-bold text-slate-900">{formatCurrency(totalPayment)}</p>
                               </div>
-                            ))}
+                            </div>
+                            <div className="min-w-0 flex-1 space-y-2">
+                              {(data.paymentBreakdown || []).map((item) => (
+                                <div key={item.name} className="flex items-center justify-between gap-2 text-xs">
+                                  <div className="flex min-w-0 items-center gap-1.5">
+                                    <span className="h-2 w-2 flex-shrink-0 rounded-full" style={{ background: item.color }} />
+                                    <span className="truncate text-slate-600 font-medium">{item.name}</span>
+                                  </div>
+                                  <span className="flex-shrink-0 font-bold text-slate-800">
+                                    {formatCurrency(item.value)} <span className="text-[10px] font-normal text-slate-400">({(item.percent ?? 0).toFixed(1)}%)</span>
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
                           </div>
                         </div>
                       )}

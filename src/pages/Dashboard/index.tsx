@@ -465,15 +465,32 @@ export default function Dashboard() {
                     <p className="text-xs text-slate-400">{tx.time}</p>
                   </div>
                   <div>
-                    <span className={cn('inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold', 
-                      tx.paymentMethod === 'CASH' ? 'bg-emerald-50 text-emerald-700' : 
-                      tx.paymentMethod === 'MOBILE' ? 'bg-amber-50 text-amber-700' :
-                      tx.paymentMethod === 'CARD' ? 'bg-blue-50 text-blue-700' :
-                      (tx.paymentMethod && tx.paymentMethod.toUpperCase().includes('SPLIT')) ? 'bg-purple-50 text-purple-700 border border-purple-200' :
-                      'bg-slate-100 text-slate-700'
-                    )}>
-                      {tx.paymentMethod}
-                    </span>
+                    {(() => {
+                      const pmUpper = String(tx.paymentMethod || '').toUpperCase()
+                      const isSplit = pmUpper.includes('SPLIT')
+                      const isMobile = !isSplit && (pmUpper.includes('MOBILE') || pmUpper.includes('MOMO'))
+                      let label = isMobile ? 'Mobile Money' : 'Cash'
+                      if (isSplit) {
+                        const cMatch = tx.paymentMethod.match(/CASH[=:]\s*([0-9.]+)/i)
+                        const mMatch = tx.paymentMethod.match(/MOBILE[=:]\s*([0-9.]+)/i)
+                        if (cMatch || mMatch) {
+                          const c = cMatch ? parseFloat(cMatch[1]) : 0
+                          const m = mMatch ? parseFloat(mMatch[1]) : 0
+                          label = `Split (Cash ₵${c} + Mobile ₵${m})`
+                        } else {
+                          label = 'Split (Cash + Mobile)'
+                        }
+                      }
+                      return (
+                        <span className={cn('inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold', 
+                          isSplit ? 'bg-purple-50 text-purple-700 border border-purple-200' :
+                          isMobile ? 'bg-amber-50 text-amber-700 border border-amber-200' :
+                          'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                        )}>
+                          {label}
+                        </span>
+                      )
+                    })()}
                   </div>
                   <div className="text-right">
                     <p className="text-sm font-bold text-slate-800">₵{tx.amount.toLocaleString()}.00</p>

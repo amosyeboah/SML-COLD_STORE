@@ -70,6 +70,9 @@ export default function Medicines() {
     mutationFn: ({ id, data }: { id: string; data: MedFormData }) => apiClient.updateMedicine(id, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['medicines'] })
+      queryClient.invalidateQueries({ queryKey: ['dashboard-stats'] })
+      queryClient.invalidateQueries({ queryKey: ['batches'] })
+      queryClient.invalidateQueries({ queryKey: ['reports'] })
       setEditingMed(null)
       setIsMedOpen(false)
     },
@@ -448,7 +451,7 @@ export default function Medicines() {
                     {filteredMedicines.length === 0 && (
                       <TableRow>
                         <TableCell colSpan={8} className="py-8 text-center text-slate-500">
-                          No medicines found matching the search criteria.
+                          No products found matching the search criteria.
                         </TableCell>
                       </TableRow>
                     )}

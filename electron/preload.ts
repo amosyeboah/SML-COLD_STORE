@@ -85,6 +85,9 @@ export const api = {
 
   // Full State Synchronization
   getFullSyncState: () => ipcRenderer.invoke('sync:getFullState'),
+
+  // Cloud Sync Credentials (Backend Managed)
+  getCloudCredentials: () => ipcRenderer.invoke('cloud:getCredentials'),
 }
 
 if (process.contextIsolated) {

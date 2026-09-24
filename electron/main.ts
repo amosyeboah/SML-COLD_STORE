@@ -504,12 +504,23 @@ ipcMain.handle('sales:create', async (_, data: {
     }
 
     const paymentRecords = data.payments && data.payments.length > 0
-      ? data.payments.map((p) => ({ method: p.method, amount: p.amount }))
-      : [{ method: data.paymentMethod || 'CASH', amount: data.total }]
+      ? data.payments.map((p) => ({
+          method: (p.method || '').toUpperCase().includes('MOBILE') || (p.method || '').toUpperCase().includes('MOMO') ? 'MOBILE' : 'CASH',
+          amount: Number(p.amount) || 0
+        }))
+      : [{
+          method: (data.paymentMethod || '').toUpperCase().includes('MOBILE') ? 'MOBILE' : 'CASH',
+          amount: data.total
+        }]
 
-    const primaryPaymentMethod = data.payments && data.payments.length > 1
-      ? 'SPLIT'
-      : (data.payments?.[0]?.method || data.paymentMethod || 'CASH')
+    let primaryPaymentMethod = 'CASH'
+    if (data.payments && data.payments.length > 1) {
+      const cashAmt = paymentRecords.filter(p => p.method === 'CASH').reduce((sum, p) => sum + p.amount, 0)
+      const mobileAmt = paymentRecords.filter(p => p.method === 'MOBILE').reduce((sum, p) => sum + p.amount, 0)
+      primaryPaymentMethod = `SPLIT:CASH=${cashAmt},MOBILE=${mobileAmt}`
+    } else {
+      primaryPaymentMethod = paymentRecords[0]?.method || (data.paymentMethod || 'CASH').toUpperCase()
+    }
 
     // 2. Create Sale
     const sale = await tx.sale.create({
@@ -677,31 +688,59 @@ ipcMain.handle('dashboard:stats', async () => {
   const salesOverviewData: { day: string, sales: number }[] = []
   salesByDay.forEach((sales, day) => salesOverviewData.push({ day, sales }))
 
-  // Payment Breakdown
-  const PAYMENT_COLORS: Record<string, string> = { CASH: '#22c55e', MOBILE: '#6366f1', CARD: '#a855f7', 'BANK TRANSFER': '#f59e0b', SPLIT: '#ec4899' }
-  const PAYMENT_LABELS: Record<string, string> = { CASH: 'Cash', MOBILE: 'Mobile Money', CARD: 'Card', 'BANK TRANSFER': 'Bank Transfer', SPLIT: 'Split Payment' }
-  const paymentTotals = new Map<string, number>()
+  // Payment Breakdown (Strictly Cash & Mobile Money)
+  let mtdCash = 0
+  let mtdMobile = 0
   for (const sale of mtdSales) {
     if ((sale as any).payments && (sale as any).payments.length > 0) {
       for (const p of (sale as any).payments) {
         const method = (p.method || 'CASH').toUpperCase()
-        paymentTotals.set(method, (paymentTotals.get(method) || 0) + (p.amount || 0))
+        if (method.includes('MOBILE') || method.includes('MOMO')) {
+          mtdMobile += Number(p.amount) || 0
+        } else {
+          mtdCash += Number(p.amount) || 0
+        }
       }
     } else {
-      const method = (sale.paymentMethod || 'CASH').toUpperCase()
-      paymentTotals.set(method, (paymentTotals.get(method) || 0) + sale.total)
+      const pm = (sale.paymentMethod || 'CASH').toUpperCase()
+      const tot = Number(sale.total) || 0
+      if (pm.startsWith('SPLIT:')) {
+        const cashMatch = pm.match(/CASH[=:]\s*([0-9.]+)/i)
+        const mobileMatch = pm.match(/MOBILE[=:]\s*([0-9.]+)/i)
+        const c = cashMatch ? parseFloat(cashMatch[1]) : 0
+        const m = mobileMatch ? parseFloat(mobileMatch[1]) : 0
+        if (c > 0 || m > 0) {
+          mtdCash += c
+          mtdMobile += m
+        } else {
+          mtdCash += tot / 2
+          mtdMobile += tot / 2
+        }
+      } else if (pm === 'SPLIT') {
+        mtdCash += tot / 2
+        mtdMobile += tot / 2
+      } else if (pm.includes('MOBILE') || pm.includes('MOMO')) {
+        mtdMobile += tot
+      } else {
+        mtdCash += tot
+      }
     }
   }
-  const paymentData: any[] = []
-  paymentTotals.forEach((value, method) => {
-    paymentData.push({
-      name: PAYMENT_LABELS[method] || method,
-      value,
-      percent: mtdRevenue > 0 ? Math.round((value / mtdRevenue) * 100) : 0,
-      color: PAYMENT_COLORS[method] || '#94a3b8'
-    })
-  })
-  paymentData.sort((a, b) => b.value - a.value)
+
+  const paymentData: any[] = [
+    {
+      name: 'Cash',
+      value: mtdCash,
+      percent: mtdRevenue > 0 ? Math.round((mtdCash / mtdRevenue) * 100) : 0,
+      color: '#22c55e'
+    },
+    {
+      name: 'Mobile Money',
+      value: mtdMobile,
+      percent: mtdRevenue > 0 ? Math.round((mtdMobile / mtdRevenue) * 100) : 0,
+      color: '#f59e0b'
+    }
+  ]
 
   // Top Medicines (from MTD Sales)
   const medicineTotals = new Map<string, { name: string; qty: number; revenue: number }>()
@@ -1171,30 +1210,58 @@ async function buildReportsData(startDate: string, endDate: string) {
     }
   })
 
-  const paymentTotals = new Map<string, number>()
+  let cashTotal = 0
+  let mobileTotal = 0
   for (const sale of sales) {
     if ((sale as any).payments && (sale as any).payments.length > 0) {
       for (const p of (sale as any).payments) {
         const method = (p.method || 'CASH').toUpperCase()
-        paymentTotals.set(method, (paymentTotals.get(method) || 0) + (p.amount || 0))
+        if (method.includes('MOBILE') || method.includes('MOMO')) {
+          mobileTotal += Number(p.amount) || 0
+        } else {
+          cashTotal += Number(p.amount) || 0
+        }
       }
     } else {
-      const method = (sale.paymentMethod || 'CASH').toUpperCase()
-      paymentTotals.set(method, (paymentTotals.get(method) || 0) + sale.total)
+      const pm = (sale.paymentMethod || 'CASH').toUpperCase()
+      const tot = Number(sale.total) || 0
+      if (pm.startsWith('SPLIT:')) {
+        const cashMatch = pm.match(/CASH[=:]\s*([0-9.]+)/i)
+        const mobileMatch = pm.match(/MOBILE[=:]\s*([0-9.]+)/i)
+        const c = cashMatch ? parseFloat(cashMatch[1]) : 0
+        const m = mobileMatch ? parseFloat(mobileMatch[1]) : 0
+        if (c > 0 || m > 0) {
+          cashTotal += c
+          mobileTotal += m
+        } else {
+          cashTotal += tot / 2
+          mobileTotal += tot / 2
+        }
+      } else if (pm === 'SPLIT') {
+        cashTotal += tot / 2
+        mobileTotal += tot / 2
+      } else if (pm.includes('MOBILE') || pm.includes('MOMO')) {
+        mobileTotal += tot
+      } else {
+        cashTotal += tot
+      }
     }
   }
 
-  const paymentBreakdownArr: any[] = []
-  paymentTotals.forEach((value, method) => paymentBreakdownArr.push([method, value]))
-  
-  const paymentBreakdown = paymentBreakdownArr
-    .map(([method, value]) => ({
-      name: PAYMENT_LABELS[method] || method,
-      value,
-      percent: totalSales > 0 ? (value / totalSales) * 100 : 0,
-      color: PAYMENT_COLORS[method] || '#94a3b8',
-    }))
-    .sort((a, b) => b.value - a.value)
+  const paymentBreakdown = [
+    {
+      name: 'Cash',
+      value: cashTotal,
+      percent: totalSales > 0 ? (cashTotal / totalSales) * 100 : 0,
+      color: '#22c55e',
+    },
+    {
+      name: 'Mobile Money',
+      value: mobileTotal,
+      percent: totalSales > 0 ? (mobileTotal / totalSales) * 100 : 0,
+      color: '#f59e0b',
+    },
+  ]
 
   const medicineTotals = new Map<string, { name: string; qty: number; revenue: number }>()
   for (const sale of sales) {
@@ -1214,9 +1281,24 @@ async function buildReportsData(startDate: string, endDate: string) {
     .slice(0, 5)
 
   const recentTransactions = recentSales.map((sale) => {
-    let paymentLabel = PAYMENT_LABELS[sale.paymentMethod.toUpperCase()] || sale.paymentMethod
-    if (sale.paymentMethod.toUpperCase() === 'SPLIT' && (sale as any).payments && (sale as any).payments.length > 0) {
-      paymentLabel = `Split (${(sale as any).payments.map((p: any) => PAYMENT_LABELS[p.method.toUpperCase()] || p.method).join(' + ')})`
+    let paymentLabel = 'Cash'
+    const pm = (sale.paymentMethod || '').toUpperCase()
+    if ((sale as any).payments && (sale as any).payments.length > 1) {
+      const parts = (sale as any).payments.map((p: any) => {
+        const m = (p.method || '').toUpperCase().includes('MOBILE') ? 'Mobile' : 'Cash'
+        return `${m}: GH₵${Number(p.amount).toFixed(2)}`
+      })
+      paymentLabel = `Split (${parts.join(' + ')})`
+    } else if (pm.startsWith('SPLIT:')) {
+      const cashMatch = pm.match(/CASH[=:]\s*([0-9.]+)/i)
+      const mobileMatch = pm.match(/MOBILE[=:]\s*([0-9.]+)/i)
+      const c = cashMatch ? parseFloat(cashMatch[1]) : 0
+      const m = mobileMatch ? parseFloat(mobileMatch[1]) : 0
+      paymentLabel = `Split (Cash: GH₵${c.toFixed(2)} + Mobile: GH₵${m.toFixed(2)})`
+    } else if (pm.includes('MOBILE') || pm.includes('MOMO')) {
+      paymentLabel = 'Mobile Money'
+    } else {
+      paymentLabel = 'Cash'
     }
     return {
       id: `INV-${sale.id.slice(0, 8).toUpperCase()}`,
@@ -1244,6 +1326,8 @@ async function buildReportsData(startDate: string, endDate: string) {
   return {
     kpis: {
       totalSales,
+      cashSales: cashTotal,
+      mobileSales: mobileTotal,
       totalPurchases,
       grossProfit,
       transactions,
@@ -1282,6 +1366,8 @@ ipcMain.handle('reports:exportExcel', async (_, startDate: string, endDate: stri
   summary.addRow([])
   summary.addRow(['Metric', 'Value'])
   summary.addRow(['Total Sales', data.kpis.totalSales])
+  summary.addRow(['Total Cash Sales', data.kpis.cashSales ?? 0])
+  summary.addRow(['Total Mobile Money Sales', data.kpis.mobileSales ?? 0])
   summary.addRow(['Total Purchases', data.kpis.totalPurchases])
   summary.addRow(['Gross Profit', data.kpis.grossProfit])
   summary.addRow(['Transactions', data.kpis.transactions])
@@ -1436,5 +1522,48 @@ ipcMain.handle('sync:getFullState', async () => {
     purchases,
     settings: settingsMap,
   }
+})
+
+// ─── Cloud Sync Backend Credentials (.env / Environment) ────────────────────
+function getCloudCredentials() {
+  let url = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL || ''
+  let anonKey = process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY || ''
+
+  if (!url || !anonKey) {
+    try {
+      const candidates = [
+        is.dev ? path.join(__dirname, '../../.env') : null,
+        path.join(process.resourcesPath, '.env'),
+        path.join(process.cwd(), '.env'),
+        path.join(app.getPath('userData'), '.env')
+      ].filter(Boolean) as string[]
+
+      for (const envPath of candidates) {
+        if (fs.existsSync(envPath)) {
+          const content = fs.readFileSync(envPath, 'utf8')
+          for (const rawLine of content.split('\n')) {
+            const line = rawLine.trim()
+            if (!line || line.startsWith('#')) continue
+            const [key, ...rest] = line.split('=')
+            const val = rest.join('=').replace(/^["']|["']$/g, '').trim()
+            if ((key === 'VITE_SUPABASE_URL' || key === 'SUPABASE_URL') && !url) url = val
+            if ((key === 'VITE_SUPABASE_ANON_KEY' || key === 'SUPABASE_ANON_KEY') && !anonKey) anonKey = val
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('Could not read backend environment file:', e)
+    }
+  }
+
+  // Production defaults for SML Legacy Limited Cloud PostgreSQL
+  if (!url) url = 'https://yhglbervaljjkmttzonk.supabase.co'
+  if (!anonKey) anonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InloZ2xiZXJ2YWxqamttdHR6b25rIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTAwNDA4MzIsImV4cCI6MjEwNTYxNjgzMn0.8STKvBtPKL3J9BH7Mdvadrna-zcYYFqGXGaBx4y_Wis'
+
+  return { url, anonKey }
+}
+
+ipcMain.handle('cloud:getCredentials', async () => {
+  return getCloudCredentials()
 })
 
