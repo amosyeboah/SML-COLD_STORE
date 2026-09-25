@@ -419,10 +419,19 @@ export async function reconcileAllSalesWithCloud(): Promise<{
 
   let pushedCount = 0
 
-  // 2. If running in Electron Desktop App, reconcile SQLite catalog and sales to Supabase
+  // 2. If running in Electron Desktop App, perform bidirectional reconciliation with Supabase
   if (typeof window !== 'undefined' && (window as any).api?.getSales) {
     try {
-      // 2a. Reconcile Products
+      // 2a. Bidirectional Reconcile Products
+      // First: pull any products from Cloud down into local SQLite database
+      const { data: cloudProductsData } = await client.from('cloud_products').select('*')
+      if (Array.isArray(cloudProductsData) && cloudProductsData.length > 0 && (window as any).api?.reconcileCloudProducts) {
+        await (window as any).api.reconcileCloudProducts(cloudProductsData).catch((err: any) => {
+          console.warn('Failed to reconcile cloud products into local DB:', err)
+        })
+      }
+
+      // Second: push any locally updated products up to Cloud
       if ((window as any).api?.getMedicines) {
         const allDbMeds = await (window as any).api.getMedicines()
         if (Array.isArray(allDbMeds) && allDbMeds.length > 0) {
@@ -446,7 +455,16 @@ export async function reconcileAllSalesWithCloud(): Promise<{
         }
       }
 
-      // 2b. Reconcile Batches
+      // 2b. Bidirectional Reconcile Batches
+      // First: pull any cloud batches down into local SQLite
+      const { data: cloudBatchesData } = await client.from('cloud_batches').select('*')
+      if (Array.isArray(cloudBatchesData) && cloudBatchesData.length > 0 && (window as any).api?.reconcileCloudBatches) {
+        await (window as any).api.reconcileCloudBatches(cloudBatchesData).catch((err: any) => {
+          console.warn('Failed to reconcile cloud batches into local DB:', err)
+        })
+      }
+
+      // Second: push local batches up to Cloud
       if ((window as any).api?.getBatches) {
         const allDbBatches = await (window as any).api.getBatches()
         if (Array.isArray(allDbBatches) && allDbBatches.length > 0) {

@@ -7,8 +7,7 @@ import Dashboard from '@/pages/Dashboard'
 import POS from '@/pages/POS'
 import Medicines from '@/pages/Medicines'
 import Inventory from '@/pages/Inventory'
-import Purchases from '@/pages/Purchases'
-import Suppliers from '@/pages/Suppliers'
+
 import Customers from '@/pages/Customers'
 import Expiry from '@/pages/Expiry'
 import Reports from '@/pages/Reports'
@@ -40,8 +39,7 @@ export const router = createHashRouter([
           { path: 'medicines', element: <Medicines /> },
           { path: 'products', element: <Navigate to="/medicines" replace /> },
           { path: 'inventory', element: <RoleGuard allowedRoles={['ADMIN', 'MANAGER']}><Inventory /></RoleGuard> },
-          { path: 'purchases', element: <RoleGuard allowedRoles={['ADMIN', 'MANAGER']}><Purchases /></RoleGuard> },
-          { path: 'suppliers', element: <RoleGuard allowedRoles={['ADMIN', 'MANAGER']}><Suppliers /></RoleGuard> },
+
           { path: 'customers', element: <Customers /> },
           { path: 'prescriptions', element: <Navigate to="/pos" replace /> },
           { path: 'categories', element: <RoleGuard allowedRoles={['ADMIN', 'MANAGER']}><Categories /></RoleGuard> },

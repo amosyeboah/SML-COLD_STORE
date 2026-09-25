@@ -2,8 +2,7 @@ import { NavLink, useNavigate } from 'react-router-dom'
 import {
   LayoutDashboard,
   Package,
-  ShoppingBag,
-  Truck,
+
   Users,
   FileText,
   BarChart3,
@@ -29,8 +28,7 @@ const navItems: { to: string; label: string; icon: any; allowedRoles: string[] }
   { to: '/medicines', label: 'Products', icon: Package, allowedRoles: ['ADMIN', 'MANAGER', 'CASHIER'] },
   { to: '/inventory', label: 'Inventory', icon: Layers, allowedRoles: ['ADMIN', 'MANAGER'] },
   { to: '/categories', label: 'Categories', icon: Tags, allowedRoles: ['ADMIN', 'MANAGER'] },
-  { to: '/purchases', label: 'Purchases', icon: ShoppingBag, allowedRoles: ['ADMIN', 'MANAGER'] },
-  { to: '/suppliers', label: 'Suppliers', icon: Truck, allowedRoles: ['ADMIN', 'MANAGER'] },
+
   { to: '/customers', label: 'Customers', icon: Users, allowedRoles: ['ADMIN', 'MANAGER', 'CASHIER'] },
   { to: '/reports', label: 'Reports', icon: BarChart3, allowedRoles: ['ADMIN', 'MANAGER'] },
   { to: '/audit', label: 'Audit Trail', icon: ShieldCheck, allowedRoles: ['ADMIN', 'MANAGER'] },

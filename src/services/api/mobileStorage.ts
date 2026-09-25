@@ -225,8 +225,11 @@ export async function fetchCloudProductsIfAvailable(): Promise<any[]> {
       minStockLevel: Number(p.min_stock_level) || 10,
     }))
 
-    setItem(STORAGE_KEYS.MEDICINES, mappedMeds)
-    return mappedMeds
+    const cloudIds = new Set(mappedMeds.map((m) => m.id))
+    const localOnly = localMeds.filter((m) => !cloudIds.has(m.id))
+    const mergedMeds = [...mappedMeds, ...localOnly]
+    setItem(STORAGE_KEYS.MEDICINES, mergedMeds)
+    return mergedMeds
   } catch (err) {
     console.warn('Failed to fetch cloud products in mobileStorage:', err)
     return localMeds
@@ -261,8 +264,11 @@ export async function fetchCloudBatchesIfAvailable(): Promise<any[]> {
       quantity: Number(b.quantity) || 0,
     }))
 
-    setItem(STORAGE_KEYS.BATCHES, mappedBatches)
-    return mappedBatches
+    const cloudIds = new Set(mappedBatches.map((b) => b.id))
+    const localOnly = localBatches.filter((b) => !cloudIds.has(b.id))
+    const mergedBatches = [...mappedBatches, ...localOnly]
+    setItem(STORAGE_KEYS.BATCHES, mergedBatches)
+    return mergedBatches
   } catch (err) {
     console.warn('Failed to fetch cloud batches in mobileStorage:', err)
     return localBatches
@@ -277,6 +283,15 @@ export async function pushCloudStateMirror(stateId: string, category: string, da
   const client = getSupabaseClient()
   if (!client || !navigator.onLine) return
   try {
+    const { data } = await client.from('cloud_audit_logs').select('metadata').eq('id', stateId).single()
+    let mergedPayload = payload
+    if (data && data.metadata && data.metadata[dataKey] && Array.isArray(data.metadata[dataKey])) {
+      const cloudList = data.metadata[dataKey]
+      const localIds = new Set(payload.map((i: any) => i.id))
+      const cloudOnly = cloudList.filter((i: any) => !localIds.has(i.id))
+      mergedPayload = [...payload, ...cloudOnly]
+    }
+    
     await client.from('cloud_audit_logs').upsert({
       id: stateId,
       store_id: 'sml_accra_main',
@@ -286,7 +301,7 @@ export async function pushCloudStateMirror(stateId: string, category: string, da
       username: 'system',
       user_role: 'ADMIN',
       severity: 'INFO',
-      metadata: { [dataKey]: payload },
+      metadata: { [dataKey]: mergedPayload },
       created_at: new Date().toISOString()
     })
   } catch (err) {
@@ -318,16 +333,32 @@ export async function fetchCloudStateMirrorsIfAvailable(): Promise<void> {
     for (const row of data) {
       if (!row.metadata) continue
       const meta = typeof row.metadata === 'string' ? JSON.parse(row.metadata) : row.metadata
+      
       if (row.id === 'STATE_USERS' && Array.isArray(meta.users) && meta.users.length > 0) {
-        setItem(STORAGE_KEYS.USERS, meta.users)
+        const local = getItem<any[]>(STORAGE_KEYS.USERS, [])
+        const cloudIds = new Set(meta.users.map((u: any) => u.id))
+        const localOnly = local.filter((u) => !cloudIds.has(u.id))
+        setItem(STORAGE_KEYS.USERS, [...meta.users, ...localOnly])
       } else if (row.id === 'STATE_CATEGORIES' && Array.isArray(meta.categories) && meta.categories.length > 0) {
-        setItem(STORAGE_KEYS.CATEGORIES, meta.categories)
+        const local = getItem<any[]>(STORAGE_KEYS.CATEGORIES, [])
+        const cloudIds = new Set(meta.categories.map((c: any) => c.id))
+        const localOnly = local.filter((c) => !cloudIds.has(c.id))
+        setItem(STORAGE_KEYS.CATEGORIES, [...meta.categories, ...localOnly])
       } else if (row.id === 'STATE_CUSTOMERS' && Array.isArray(meta.customers) && meta.customers.length > 0) {
-        setItem(STORAGE_KEYS.CUSTOMERS, meta.customers)
+        const local = getItem<any[]>(STORAGE_KEYS.CUSTOMERS, [])
+        const cloudIds = new Set(meta.customers.map((c: any) => c.id))
+        const localOnly = local.filter((c) => !cloudIds.has(c.id))
+        setItem(STORAGE_KEYS.CUSTOMERS, [...meta.customers, ...localOnly])
       } else if (row.id === 'STATE_SUPPLIERS' && Array.isArray(meta.suppliers) && meta.suppliers.length > 0) {
-        setItem(STORAGE_KEYS.SUPPLIERS, meta.suppliers)
+        const local = getItem<any[]>(STORAGE_KEYS.SUPPLIERS, [])
+        const cloudIds = new Set(meta.suppliers.map((s: any) => s.id))
+        const localOnly = local.filter((s) => !cloudIds.has(s.id))
+        setItem(STORAGE_KEYS.SUPPLIERS, [...meta.suppliers, ...localOnly])
       } else if (row.id === 'STATE_PURCHASES' && Array.isArray(meta.purchases)) {
-        setItem(STORAGE_KEYS.PURCHASES, meta.purchases)
+        const local = getItem<any[]>(STORAGE_KEYS.PURCHASES, [])
+        const cloudIds = new Set(meta.purchases.map((p: any) => p.id))
+        const localOnly = local.filter((p) => !cloudIds.has(p.id))
+        setItem(STORAGE_KEYS.PURCHASES, [...meta.purchases, ...localOnly])
       } else if (row.id === 'STATE_SETTINGS' && meta.settings && typeof meta.settings === 'object') {
         const existing = getItem(STORAGE_KEYS.SETTINGS, {})
         setItem(STORAGE_KEYS.SETTINGS, { ...existing, ...meta.settings })

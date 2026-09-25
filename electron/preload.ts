@@ -85,6 +85,8 @@ export const api = {
 
   // Full State Synchronization
   getFullSyncState: () => ipcRenderer.invoke('sync:getFullState'),
+  reconcileCloudProducts: (cloudProducts: any[]) => ipcRenderer.invoke('sync:reconcileCloudProducts', cloudProducts),
+  reconcileCloudBatches: (cloudBatches: any[]) => ipcRenderer.invoke('sync:reconcileCloudBatches', cloudBatches),
 
   // Cloud Sync Credentials (Backend Managed)
   getCloudCredentials: () => ipcRenderer.invoke('cloud:getCredentials'),

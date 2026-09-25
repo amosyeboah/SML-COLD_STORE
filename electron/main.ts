@@ -1524,6 +1524,105 @@ ipcMain.handle('sync:getFullState', async () => {
   }
 })
 
+// ─── Bidirectional Reconcile IPC Handlers (Cloud -> SQLite) ─────────────────
+ipcMain.handle('sync:reconcileCloudProducts', async (_, cloudProducts: any[]) => {
+  if (!Array.isArray(cloudProducts) || cloudProducts.length === 0) return { count: 0 }
+
+  const categories = await prisma.category.findMany()
+  const catMap = new Map<string, string>()
+  categories.forEach(c => catMap.set(c.name.toLowerCase().trim(), c.id))
+
+  let importedCount = 0
+  for (const p of cloudProducts) {
+    const rawCatName = (p.category_name || 'General').trim()
+    let catId = catMap.get(rawCatName.toLowerCase())
+    if (!catId) {
+      const newCat = await prisma.category.create({
+        data: { name: rawCatName }
+      })
+      catId = newCat.id
+      catMap.set(newCat.name.toLowerCase().trim(), catId)
+    }
+
+    const existing = await prisma.medicine.findFirst({
+      where: {
+        OR: [
+          { id: p.id },
+          { sku: p.sku }
+        ]
+      }
+    })
+
+    if (!existing) {
+      await prisma.medicine.create({
+        data: {
+          id: p.id,
+          name: p.name,
+          genericName: p.generic_name || null,
+          sku: p.sku,
+          categoryId: catId,
+          price: Number(p.price) || 0,
+          cost: Number(p.cost) || 0,
+          minStockLevel: Number(p.min_stock_level) || 10
+        }
+      })
+      importedCount++
+    } else {
+      await prisma.medicine.update({
+        where: { id: existing.id },
+        data: {
+          name: p.name,
+          genericName: p.generic_name || null,
+          price: Number(p.price) || 0,
+          cost: Number(p.cost) || 0,
+          minStockLevel: Number(p.min_stock_level) || 10,
+          categoryId: catId
+        }
+      })
+    }
+  }
+
+  return { importedCount }
+})
+
+ipcMain.handle('sync:reconcileCloudBatches', async (_, cloudBatches: any[]) => {
+  if (!Array.isArray(cloudBatches) || cloudBatches.length === 0) return { count: 0 }
+
+  let importedCount = 0
+  for (const b of cloudBatches) {
+    if (!b.product_id) continue
+    const medExists = await prisma.medicine.findUnique({ where: { id: b.product_id } })
+    if (!medExists) continue
+
+    const existing = await prisma.batch.findUnique({ where: { id: b.id } })
+    const expDate = b.expiry_date ? new Date(b.expiry_date) : new Date(Date.now() + 365 * 24 * 3600 * 1000)
+
+    if (!existing) {
+      await prisma.batch.create({
+        data: {
+          id: b.id,
+          medicineId: b.product_id,
+          batchNumber: b.batch_number || `BAT-${Date.now().toString().slice(-6)}`,
+          expiryDate: expDate,
+          quantity: Number(b.quantity) || 0
+        }
+      })
+      importedCount++
+    } else {
+      await prisma.batch.update({
+        where: { id: b.id },
+        data: {
+          batchNumber: b.batch_number || existing.batchNumber,
+          expiryDate: expDate,
+          quantity: Number(b.quantity) || 0
+        }
+      })
+    }
+  }
+
+  return { importedCount }
+})
+
 // ─── Cloud Sync Backend Credentials (.env / Environment) ────────────────────
 function getCloudCredentials() {
   let url = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL || ''
