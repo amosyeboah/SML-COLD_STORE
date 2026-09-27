@@ -1,5 +1,6 @@
 import { buildServer } from './server'
 import { FastifyInstance } from 'fastify'
+import { startPeriodicSyncWorker, stopPeriodicSyncWorker } from './services/syncEngine'
 
 let activeServer: FastifyInstance | null = null
 
@@ -25,7 +26,6 @@ export async function startHubServer(
     console.log(`📡 [SML Local Depot Hub] Authoritative SQLite Database active`)
     // Start background sync worker (non-blocking)
     try {
-      const { startPeriodicSyncWorker } = require('./services/syncEngine')
       startPeriodicSyncWorker()
       console.log(`🔄 [SML Local Depot Hub] Background Sync Worker started`)
     } catch (syncErr) {
@@ -41,7 +41,6 @@ export async function startHubServer(
 
 export async function stopHubServer(): Promise<void> {
   try {
-    const { stopPeriodicSyncWorker } = require('./services/syncEngine')
     stopPeriodicSyncWorker()
   } catch {}
 

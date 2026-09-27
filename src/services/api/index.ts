@@ -14,8 +14,13 @@ import { hubClient } from './hubClient'
  */
 export function getApi() {
   if (typeof window !== 'undefined' && window.api) {
-    if (!window.api.refundSale) {
-      window.api.refundSale = async (id: string, username?: string, userRole?: string) => {
+    const electronApi = window.api as any
+    
+    // Create a wrapper object that includes both Electron IPC and custom methods
+    const wrappedApi = {
+      ...electronApi,
+      
+      refundSale: async (id: string, username?: string, userRole?: string) => {
         if ((window as any).electron?.ipcRenderer?.invoke) {
           try {
             return await (window as any).electron.ipcRenderer.invoke('sales:refund', id)
@@ -24,9 +29,27 @@ export function getApi() {
           }
         }
         return await (hubClient as any).refundSale(id, username, userRole)
+      },
+      
+      // Bluetooth printer methods
+      connectBluetoothPrinter: () => hubClient.connectBluetoothPrinter(),
+      disconnectBluetoothPrinter: () => hubClient.disconnectBluetoothPrinter(),
+      getBluetoothPrinterStatus: () => hubClient.getBluetoothPrinterStatus(),
+      testBluetoothPrinter: () => hubClient.testBluetoothPrinter(),
+      setBluetoothPaperWidth: (w: any) => hubClient.setBluetoothPaperWidth(w),
+      
+      // Enhanced printReceipt with Bluetooth printer priority
+      printReceipt: async (html: string) => {
+        const btStatus = hubClient.getBluetoothPrinterStatus()
+        if (btStatus.isConnected) {
+          const btRes = await hubClient.printReceipt(html)
+          if (btRes.success) return btRes
+        }
+        return await electronApi.printReceipt(html)
       }
     }
-    return window.api
+
+    return wrappedApi
   }
   return hubClient as any
 }

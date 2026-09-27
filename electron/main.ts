@@ -130,8 +130,15 @@ function createWindow(): void {
     return { action: 'deny' }
   })
 
+  mainWindow.webContents.on('console-message', (_event, level, message, line, sourceId) => {
+    if (is.dev) {
+      console.log(`[Renderer Log ${level}]: ${message} (${sourceId}:${line})`)
+    }
+  })
+
   if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
     mainWindow.loadURL(process.env['ELECTRON_RENDERER_URL'])
+    // mainWindow.webContents.openDevTools()
   } else {
     mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
   }

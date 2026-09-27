@@ -26,11 +26,16 @@ import {
   ChevronRight,
   ShoppingBag,
   Percent,
+  Bluetooth,
+  BluetoothConnected,
+  BluetoothOff,
+  Smartphone,
 } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { bluetoothPrinter, BluetoothPrinterStatus, PaperWidth } from '@/services/hardware/bluetoothPrinter'
 
 // ── Default settings values ──────────────────────────────────────────────────
 const DEFAULTS: Record<string, string> = {
@@ -144,6 +149,62 @@ export default function Settings() {
     queryKey: ['system-printers'],
     queryFn: () => window.api.getPrinters?.() ?? Promise.resolve([]),
   })
+
+  const [btStatus, setBtStatus] = useState<BluetoothPrinterStatus>(bluetoothPrinter.getStatus())
+  const [isConnectingBt, setIsConnectingBt] = useState(false)
+  const [btFeedback, setBtFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null)
+
+  useEffect(() => {
+    return bluetoothPrinter.subscribe((status) => {
+      setBtStatus(status)
+      if (status.isConnected && status.deviceName) {
+        set('hw.printerName', status.deviceName)
+        set('hw.printerPort', 'Bluetooth')
+      }
+    })
+  }, [])
+
+  const handleConnectBt = async () => {
+    setIsConnectingBt(true)
+    setBtFeedback(null)
+    try {
+      const res = await bluetoothPrinter.connect()
+      if (res.success) {
+        setBtFeedback({ type: 'success', message: `Successfully connected to ${res.deviceName || 'Bluetooth Printer'}!` })
+        set('hw.printerName', res.deviceName || 'Bluetooth Printer')
+        set('hw.printerPort', 'Bluetooth')
+      } else if (res.cancelled) {
+        // User cancelled the device picker - don't show error feedback
+        setBtFeedback(null)
+      } else {
+        // Actual error
+        setBtFeedback({ type: 'error', message: res.error || 'Connection failed' })
+      }
+    } catch (e: any) {
+      setBtFeedback({ type: 'error', message: e?.message || 'Connection failed' })
+    } finally {
+      setIsConnectingBt(false)
+    }
+  }
+
+  const handleDisconnectBt = async () => {
+    await bluetoothPrinter.disconnect()
+    setBtFeedback({ type: 'success', message: 'Bluetooth printer disconnected.' })
+  }
+
+  const handleTestPrintBt = async () => {
+    setBtFeedback(null)
+    const res = await bluetoothPrinter.testPrint()
+    if (res.success) {
+      setBtFeedback({ type: 'success', message: 'Test receipt sent to Bluetooth printer!' })
+    } else {
+      setBtFeedback({ type: 'error', message: res.error || 'Failed to send test print' })
+    }
+  }
+
+  const handlePaperWidthChange = (width: PaperWidth) => {
+    bluetoothPrinter.setPaperWidth(width)
+  }
 
   useEffect(() => {
     if (stored && Object.keys(stored).length > 0) {
@@ -693,13 +754,145 @@ export default function Settings() {
                       onChange={(e) => set('hw.printerPort', e.target.value)}
                       className="h-9 w-full rounded-md border border-gray-200 bg-white px-3 text-sm"
                     >
-                      {['USB', 'COM1', 'COM2', 'COM3', 'COM4', 'LPT1', 'Network (IP)'].map((p) => (
+                      {['USB', 'Bluetooth', 'Network (IP)', 'COM1', 'COM2', 'COM3', 'COM4', 'LPT1'].map((p) => (
                         <option key={p} value={p}>
                           {p}
                         </option>
                       ))}
                     </select>
                   </FieldRow>
+                </CardContent>
+              </Card>
+
+              {/* Bluetooth Thermal Receipt Printer (Android & Mobile) */}
+              <Card className="border-blue-200 bg-gradient-to-b from-blue-50/30 to-white shadow-sm overflow-hidden">
+                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-blue-100 bg-blue-50/70 px-5 py-3">
+                  <div className="flex items-center gap-2">
+                    <Bluetooth className="h-4 w-4 text-blue-600" />
+                    <span className="text-sm font-semibold text-gray-800">
+                      Bluetooth Thermal Printer (Android & Mobile)
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {btStatus.isConnected ? (
+                      <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-800 ring-1 ring-emerald-300">
+                        <BluetoothConnected className="h-3.5 w-3.5 text-emerald-600" />
+                        Connected: {btStatus.deviceName || 'BT Printer'}
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-600">
+                        <BluetoothOff className="h-3.5 w-3.5 text-slate-400" />
+                        Disconnected
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                <CardContent className="p-5 space-y-4">
+                  {/* Android tablet guidance banner */}
+                  <div className="rounded-xl border border-blue-100 bg-blue-50/60 p-3.5 flex items-start gap-3">
+                    <Smartphone className="h-5 w-5 flex-shrink-0 text-blue-600 mt-0.5" />
+                    <div className="text-xs text-blue-900 space-y-1">
+                      <p className="font-semibold">Android Tablet & Phone Wireless Printing</p>
+                      <p className="text-blue-700 leading-relaxed">
+                        Connect portable 58mm or 80mm ESC/POS Bluetooth receipt printers (e.g. GOOJPRT, Xprinter, MPT-II, Cat, or POS-58). Make sure your Android device's Bluetooth is switched ON before scanning.
+                      </p>
+                    </div>
+                  </div>
+
+                  {!btStatus.isSupported && (
+                    <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 flex items-start gap-2">
+                      <AlertCircle className="h-4 w-4 flex-shrink-0 text-amber-600 mt-0.5" />
+                      <p className="text-xs text-amber-800">
+                        <strong>Browser Notice:</strong> Web Bluetooth is supported on Google Chrome and Chromium browsers on Android. Open this app inside Google Chrome on your Android device to connect directly to Bluetooth thermal printers.
+                      </p>
+                    </div>
+                  )}
+
+                  {btFeedback && (
+                    <div
+                      className={`rounded-xl border p-3 text-xs font-medium flex items-center justify-between ${
+                        btFeedback.type === 'success'
+                          ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+                          : 'border-red-200 bg-red-50 text-red-800'
+                      }`}
+                    >
+                      <span>{btFeedback.message}</span>
+                      <button
+                        type="button"
+                        onClick={() => setBtFeedback(null)}
+                        className="text-xs underline ml-2 opacity-70 hover:opacity-100"
+                      >
+                        Dismiss
+                      </button>
+                    </div>
+                  )}
+
+                  <FieldRow label="Thermal Paper Width" icon={Printer}>
+                    <div className="grid grid-cols-2 gap-3 w-full">
+                      <button
+                        type="button"
+                        onClick={() => handlePaperWidthChange('58mm')}
+                        className={`flex items-center justify-center gap-2 rounded-lg border py-2.5 text-xs font-semibold transition-all ${
+                          btStatus.paperWidth === '58mm'
+                            ? 'border-blue-600 bg-blue-50 text-blue-700 shadow-xs'
+                            : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-50'
+                        }`}
+                      >
+                        <span>58mm (2-inch Portable)</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handlePaperWidthChange('80mm')}
+                        className={`flex items-center justify-center gap-2 rounded-lg border py-2.5 text-xs font-semibold transition-all ${
+                          btStatus.paperWidth === '80mm'
+                            ? 'border-blue-600 bg-blue-50 text-blue-700 shadow-xs'
+                            : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-50'
+                        }`}
+                      >
+                        <span>80mm (3-inch Desktop)</span>
+                      </button>
+                    </div>
+                  </FieldRow>
+
+                  <div className="flex flex-wrap items-center gap-3 pt-2">
+                    <Button
+                      type="button"
+                      disabled={isConnectingBt || !btStatus.isSupported}
+                      onClick={handleConnectBt}
+                      className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white shadow-sm"
+                    >
+                      <Bluetooth className={`h-4 w-4 ${isConnectingBt ? 'animate-spin' : ''}`} />
+                      {isConnectingBt
+                        ? 'Searching & Connecting...'
+                        : btStatus.isConnected
+                        ? 'Reconnect / Change Device'
+                        : 'Scan & Connect Bluetooth Printer'}
+                    </Button>
+
+                    {btStatus.isConnected && (
+                      <>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          onClick={handleTestPrintBt}
+                          className="flex items-center gap-2 border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
+                        >
+                          <Printer className="h-4 w-4 text-emerald-600" />
+                          Test Print Receipt
+                        </Button>
+
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          onClick={handleDisconnectBt}
+                          className="text-rose-600 hover:bg-rose-50 hover:text-rose-700"
+                        >
+                          Disconnect
+                        </Button>
+                      </>
+                    )}
+                  </div>
                 </CardContent>
               </Card>
 

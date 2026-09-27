@@ -28,9 +28,12 @@ import {
   Play,
   Split,
   Printer,
+  Bluetooth,
+  BluetoothConnected,
 } from 'lucide-react'
 import type { Category, Customer } from '@/types'
 import { cn } from '@/utils'
+import { bluetoothPrinter, BluetoothPrinterStatus } from '@/services/hardware/bluetoothPrinter'
 
 export interface SplitPaymentEntry {
   method: 'CASH' | 'MOBILE'
@@ -792,7 +795,37 @@ export default function POS() {
   const [isCartDrawerOpen, setIsCartDrawerOpen] = useState(false)
   const [toast, setToast] = useState<ToastMessage | null>(null)
   const [confirmedPayment, setConfirmedPayment] = useState<PaymentConfirmedData | null>(null)
+  const [btStatus, setBtStatus] = useState<BluetoothPrinterStatus>(bluetoothPrinter.getStatus())
   const searchRef = useRef<HTMLInputElement>(null)
+
+  // Track Bluetooth printer state
+  useEffect(() => {
+    return bluetoothPrinter.subscribe((status) => {
+      setBtStatus(status)
+    })
+  }, [])
+
+  const handleQuickConnectBt = async () => {
+    if (btStatus.isConnected) {
+      const res = await bluetoothPrinter.testPrint()
+      if (res.success) {
+        setToast({ type: 'success', message: 'Bluetooth test receipt sent!' })
+      } else {
+        setToast({ type: 'error', message: res.error || 'Test print failed' })
+      }
+    } else {
+      try {
+        const res = await bluetoothPrinter.connect()
+        if (res.success) {
+          setToast({ type: 'success', message: `Connected to ${res.deviceName || 'Bluetooth Printer'}!` })
+        } else if (res.error) {
+          setToast({ type: 'error', message: res.error })
+        }
+      } catch (e: any) {
+        setToast({ type: 'error', message: e?.message || 'Connection failed' })
+      }
+    }
+  }
 
   // Auto-dismiss toasts
   useEffect(() => {
@@ -1385,12 +1418,24 @@ export default function POS() {
                   type="button"
                   onClick={async () => {
                     await window.api.printReceipt(confirmedPayment.receiptHTML)
-                    setToast({ type: 'success', message: 'Receipt print sent' })
+                    setToast({
+                      type: 'success',
+                      message: btStatus.isConnected ? 'Receipt sent to Bluetooth printer!' : 'Receipt print sent',
+                    })
                   }}
                   className="flex items-center justify-center gap-2 rounded-2xl border border-slate-300 bg-white py-3.5 text-xs sm:text-sm font-bold text-slate-700 shadow-sm hover:bg-slate-50 active:scale-95 transition-all"
                 >
-                  <Printer className="h-4 w-4 text-slate-600" />
-                  Print Receipt
+                  {btStatus.isConnected ? (
+                    <>
+                      <BluetoothConnected className="h-4 w-4 text-emerald-600" />
+                      <span>Print Receipt (BT)</span>
+                    </>
+                  ) : (
+                    <>
+                      <Printer className="h-4 w-4 text-slate-600" />
+                      <span>Print Receipt</span>
+                    </>
+                  )}
                 </button>
 
                 <button
@@ -1526,6 +1571,33 @@ export default function POS() {
           >
             <Barcode className="h-4 w-4 text-blue-600" />
             <span>Scan Barcode</span>
+          </button>
+
+          <button
+            onClick={handleQuickConnectBt}
+            title={
+              btStatus.isConnected
+                ? `Bluetooth Printer: ${btStatus.deviceName || 'Connected'}. Click to test print.`
+                : 'Click to scan & connect Bluetooth receipt printer'
+            }
+            className={cn(
+              'flex items-center gap-1.5 rounded-xl border px-3 py-2 text-xs sm:text-sm font-medium transition-all active:scale-95',
+              btStatus.isConnected
+                ? 'border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100 shadow-xs'
+                : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+            )}
+          >
+            {btStatus.isConnected ? (
+              <>
+                <BluetoothConnected className="h-4 w-4 text-emerald-600" />
+                <span className="hidden sm:inline font-semibold">{btStatus.deviceName || 'BT Printer'}</span>
+              </>
+            ) : (
+              <>
+                <Bluetooth className="h-4 w-4 text-blue-600" />
+                <span className="hidden sm:inline">BT Printer</span>
+              </>
+            )}
           </button>
 
           <button

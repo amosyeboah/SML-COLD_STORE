@@ -3,6 +3,7 @@
  * to the Authoritative Local Depot Hub.
  */
 import { getDeviceProfile } from './deviceIdentity'
+import { bluetoothPrinter } from '../hardware/bluetoothPrinter'
 
 export function getHubBaseUrl(): string {
   if (typeof localStorage !== 'undefined') {
@@ -310,6 +311,13 @@ export const hubClient = {
 
   // Printing & Hardware
   printReceipt: async (html: string) => {
+    // If Bluetooth printer is connected, route print job directly to Bluetooth ESC/POS printer
+    if (bluetoothPrinter.getStatus().isConnected) {
+      const res = await bluetoothPrinter.printReceipt(html)
+      if (res.success) return { success: true }
+      console.warn('Bluetooth print failed, falling back to window print:', res.error)
+    }
+
     if (typeof window !== 'undefined') {
       const printWindow = window.open('', '_blank', 'width=350,height=600')
       if (printWindow) {
@@ -333,11 +341,29 @@ export const hubClient = {
     return { success: false }
   },
 
+  // Bluetooth Printer Controls
+  connectBluetoothPrinter: async () => bluetoothPrinter.connect(),
+  disconnectBluetoothPrinter: async () => bluetoothPrinter.disconnect(),
+  getBluetoothPrinterStatus: () => bluetoothPrinter.getStatus(),
+  testBluetoothPrinter: async () => bluetoothPrinter.testPrint(),
+  setBluetoothPaperWidth: (width: '58mm' | '80mm') => bluetoothPrinter.setPaperWidth(width),
+
   getPrinters: async () => {
-    return []
+    const list: any[] = []
+    const btStatus = bluetoothPrinter.getStatus()
+    if (btStatus.isConnected && btStatus.deviceName) {
+      list.push({ name: `Bluetooth: ${btStatus.deviceName}`, isDefault: true })
+    }
+    return list
   },
 
   openCashDrawer: async () => {
+    // If Bluetooth printer is connected, trigger ESC/POS pulse
+    if (bluetoothPrinter.getStatus().isConnected) {
+      // ESC p 0 25 250 (pulse cash drawer kick)
+      await bluetoothPrinter.sendRawBytes(new Uint8Array([0x1b, 0x70, 0x00, 0x19, 0xfa]))
+      return { success: true }
+    }
     return { success: false, reason: 'Cash drawer not available via hub' }
   },
 
