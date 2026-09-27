@@ -6,6 +6,13 @@ import * as bcrypt from 'bcryptjs'
 import * as fs from 'fs'
 import * as path from 'path'
 import * as ExcelJS from 'exceljs'
+import { startHubServer } from '../src/hub'
+import * as saleService from '../src/hub/services/saleService'
+import * as purchaseService from '../src/hub/services/purchaseService'
+import * as inventoryService from '../src/hub/services/inventoryService'
+import * as auditService from '../src/hub/services/auditService'
+import * as syncEngine from '../src/hub/services/syncEngine'
+import * as syncOutboxService from '../src/hub/services/syncOutboxService'
 
 // ─── Prisma ─────────────────────────────────────────────────────────────────
 let prisma: PrismaClientType
@@ -137,6 +144,12 @@ app.whenReady().then(async () => {
     optimizer.watchWindowShortcuts(window)
   })
   await initDatabase()
+  try {
+    await startHubServer()
+    console.log('✅ Local Depot Hub HTTP API is live on LAN')
+  } catch (hubErr) {
+    console.warn('⚠️ Could not start Local Depot Hub on default port:', hubErr)
+  }
   createWindow()
   app.on('activate', function () {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
@@ -244,78 +257,15 @@ ipcMain.handle('medicines:getAll', async () => {
 })
 
 ipcMain.handle('medicines:create', async (_, data: any) => {
-  const created = await prisma.medicine.create({
-    data,
-    include: { category: true, batches: true },
-  })
-  await recordAudit({
-    action: 'PRODUCT_CREATE',
-    category: 'PRICING',
-    details: `New product "${created.name}" (SKU: ${created.sku}) added with price GH₵${created.price.toFixed(2)}`,
-    severity: 'INFO',
-    metadata: { productId: created.id, name: created.name, price: created.price, cost: created.cost },
-  })
-  return created
+  return await inventoryService.createProduct({ ...data, deviceId: 'desktop-main-pos' })
 })
 
 ipcMain.handle('medicines:update', async (_, id: string, data: any) => {
-  const existing = await prisma.medicine.findUnique({ where: { id } })
-  const updated = await prisma.medicine.update({
-    where: { id },
-    data,
-    include: { category: true, batches: true },
-  })
-
-  if (existing) {
-    if (data.price !== undefined && Number(data.price) !== Number(existing.price)) {
-      await recordAudit({
-        action: 'PRICE_CHANGE',
-        category: 'PRICING',
-        details: `Selling price for "${existing.name}" changed from GH₵${existing.price.toFixed(2)} to GH₵${Number(data.price).toFixed(2)}`,
-        severity: 'WARNING',
-        metadata: { productId: id, name: existing.name, oldPrice: existing.price, newPrice: Number(data.price) },
-      })
-    }
-    if (data.cost !== undefined && Number(data.cost) !== Number(existing.cost)) {
-      await recordAudit({
-        action: 'COST_CHANGE',
-        category: 'PRICING',
-        details: `Unit purchase cost for "${existing.name}" changed from GH₵${existing.cost.toFixed(2)} to GH₵${Number(data.cost).toFixed(2)}`,
-        severity: 'WARNING',
-        metadata: { productId: id, name: existing.name, oldCost: existing.cost, newCost: Number(data.cost) },
-      })
-    }
-  }
-
-  return updated
+  return await inventoryService.updateProduct(id, data, { deviceId: 'desktop-main-pos' })
 })
 
 ipcMain.handle('medicines:delete', async (_, id: string) => {
-  const existing = await prisma.medicine.findUnique({
-    where: { id },
-    include: { batches: true },
-  })
-  if (!existing) return null
-
-  const batchIds = existing.batches.map((b) => b.id)
-
-  await prisma.$transaction(async (tx) => {
-    if (batchIds.length > 0) {
-      await tx.saleItem.deleteMany({ where: { batchId: { in: batchIds } } })
-      await tx.batch.deleteMany({ where: { medicineId: id } })
-    }
-    await tx.purchaseItem.deleteMany({ where: { medicineId: id } })
-    await tx.medicine.delete({ where: { id } })
-  })
-
-  await recordAudit({
-    action: 'PRODUCT_DELETE',
-    category: 'INVENTORY',
-    details: `Product "${existing.name}" (SKU: ${existing.sku}) and ${existing.batches.length} associated lot(s) were permanently removed`,
-    severity: 'WARNING',
-    metadata: { productId: id, name: existing.name, sku: existing.sku },
-  })
-  return existing
+  return await inventoryService.deleteProduct(id, { deviceId: 'desktop-main-pos' })
 })
 
 // ─── Users ────────────────────────────────────────────────────────────────────
@@ -391,52 +341,15 @@ ipcMain.handle('batches:getAll', async (_, startDate?: string, endDate?: string)
 })
 
 ipcMain.handle('batches:create', async (_, data: any) => {
-  const { expiryDate, ...rest } = data
-  const created = await prisma.batch.create({
-    data: {
-      ...rest,
-      expiryDate: new Date(expiryDate),
-    },
-    include: { medicine: true },
-  })
-  await recordAudit({
-    action: 'BATCH_RECEIVE',
-    category: 'INVENTORY',
-    details: `Stock lot received: ${created.quantity} units of "${created.medicine?.name || 'Product'}" (Batch: ${created.batchNumber})`,
-    severity: 'INFO',
-    metadata: { batchId: created.id, batchNumber: created.batchNumber, quantity: created.quantity, productName: created.medicine?.name },
-  })
-  return created
+  return await inventoryService.createBatch({ ...data, deviceId: 'desktop-main-pos' })
 })
 
 ipcMain.handle('batches:update', async (_, id: string, data: any) => {
-  const { expiryDate, ...rest } = data
-  const updateData: any = { ...rest }
-  if (expiryDate) updateData.expiryDate = new Date(expiryDate)
-  return prisma.batch.update({
-    where: { id },
-    data: updateData,
-    include: { medicine: true },
-  })
+  return await inventoryService.updateBatch(id, data, { deviceId: 'desktop-main-pos' })
 })
 
 ipcMain.handle('batches:delete', async (_, id: string) => {
-  const existing = await prisma.batch.findUnique({ where: { id }, include: { medicine: true } })
-  if (!existing) return null
-
-  await prisma.$transaction(async (tx) => {
-    await tx.saleItem.deleteMany({ where: { batchId: id } })
-    await tx.batch.delete({ where: { id } })
-  })
-
-  await recordAudit({
-    action: 'BATCH_DELETE',
-    category: 'INVENTORY',
-    details: `Discarded/Deleted batch "${existing.batchNumber || id}" of "${existing.medicine?.name || 'Product'}" (${existing.quantity || 0} units)`,
-    severity: 'CRITICAL',
-    metadata: { batchId: id, batchNumber: existing.batchNumber, quantity: existing.quantity, productName: existing.medicine?.name },
-  })
-  return existing
+  return await inventoryService.deleteBatch(id, { deviceId: 'desktop-main-pos' })
 })
 
 // ─── Suppliers ────────────────────────────────────────────────────────────────
@@ -474,116 +387,10 @@ ipcMain.handle('customers:delete', async (_, id: string) => {
 })
 
 // ─── Sales (POS) ──────────────────────────────────────────────────────────────
-ipcMain.handle('sales:create', async (_, data: {
-  customerId?: string
-  paymentMethod: string
-  total: number
-  items: { batchId: string; quantity: number; price: number }[]
-  payments?: { method: string; amount: number }[]
-  prescription?: { doctorName: string; notes?: string }
-}) => {
-  return await prisma.$transaction(async (tx) => {
-    const today = new Date()
-    today.setHours(0, 0, 0, 0)
-
-    // 1. Validate batches before creating sale
-    for (const item of data.items) {
-      const batch = await tx.batch.findUnique({
-        where: { id: item.batchId },
-        include: { medicine: true },
-      })
-      if (!batch) {
-        throw new Error(`Batch ID ${item.batchId} not found`)
-      }
-      if (new Date(batch.expiryDate) < today) {
-        throw new Error(`Cannot sell expired medicine "${batch.medicine?.name}" (Batch: ${batch.batchNumber})`)
-      }
-      if (batch.quantity < item.quantity) {
-        throw new Error(`Insufficient stock for "${batch.medicine?.name}" (Batch: ${batch.batchNumber}). Requested: ${item.quantity}, Available: ${batch.quantity}`)
-      }
-    }
-
-    const paymentRecords = data.payments && data.payments.length > 0
-      ? data.payments.map((p) => ({
-          method: (p.method || '').toUpperCase().includes('MOBILE') || (p.method || '').toUpperCase().includes('MOMO') ? 'MOBILE' : 'CASH',
-          amount: Number(p.amount) || 0
-        }))
-      : [{
-          method: (data.paymentMethod || '').toUpperCase().includes('MOBILE') ? 'MOBILE' : 'CASH',
-          amount: data.total
-        }]
-
-    let primaryPaymentMethod = 'CASH'
-    if (data.payments && data.payments.length > 1) {
-      const cashAmt = paymentRecords.filter(p => p.method === 'CASH').reduce((sum, p) => sum + p.amount, 0)
-      const mobileAmt = paymentRecords.filter(p => p.method === 'MOBILE').reduce((sum, p) => sum + p.amount, 0)
-      primaryPaymentMethod = `SPLIT:CASH=${cashAmt},MOBILE=${mobileAmt}`
-    } else {
-      primaryPaymentMethod = paymentRecords[0]?.method || (data.paymentMethod || 'CASH').toUpperCase()
-    }
-
-    // 2. Create Sale
-    const sale = await tx.sale.create({
-      data: {
-        customerId: data.customerId,
-        paymentMethod: primaryPaymentMethod,
-        total: data.total,
-        items: {
-          create: data.items.map((i) => ({
-            batchId: i.batchId,
-            quantity: i.quantity,
-            price: i.price,
-          })),
-        },
-        payments: {
-          create: paymentRecords,
-        },
-      },
-      include: { items: true, payments: true },
-    })
-
-    // 3. Reduce batch quantities
-    for (const item of data.items) {
-      await tx.batch.update({
-        where: { id: item.batchId },
-        data: { quantity: { decrement: item.quantity } },
-      })
-    }
-
-    // 4. Create Prescription if provided
-    if (data.prescription && data.customerId) {
-      await tx.prescription.create({
-        data: {
-          saleId: sale.id,
-          customerId: data.customerId,
-          doctorName: data.prescription.doctorName,
-          notes: data.prescription.notes,
-        },
-      })
-    }
-
-    if (data.total >= 500) {
-      const paymentSummary = data.payments && data.payments.length > 1
-        ? `SPLIT (${data.payments.map((p) => `${p.method}: GH₵${p.amount.toFixed(2)}`).join(', ')})`
-        : primaryPaymentMethod
-
-      await recordAudit({
-        action: 'HIGH_VALUE_SALE',
-        category: 'SALES',
-        details: `High-value POS transaction completed: GH₵${data.total.toFixed(2)} (${data.items.length} items, paid via ${paymentSummary})`,
-        severity: 'INFO',
-        metadata: {
-          saleId: sale.id,
-          total: data.total,
-          paymentMethod: primaryPaymentMethod,
-          payments: paymentRecords,
-          itemCount: data.items.length,
-          customerId: data.customerId,
-        },
-      })
-    }
-
-    return sale
+ipcMain.handle('sales:create', async (_, data: any) => {
+  return await saleService.completeSale({
+    ...data,
+    deviceId: 'desktop-main-pos',
   })
 })
 
@@ -603,6 +410,10 @@ ipcMain.handle('sales:getAll', async () => {
     },
     orderBy: { date: 'desc' },
   })
+})
+
+ipcMain.handle('sales:refund', async (_, id: string) => {
+  return await saleService.refundSale(id)
 })
 
 // ─── Dashboard Stats ─────────────────────────────────────────────────────────
@@ -830,53 +641,10 @@ ipcMain.handle('purchases:getAll', async () => {
   })
 })
 
-ipcMain.handle('purchases:create', async (_, data: { supplierId: string; total: number; items: { medicineId: string; quantity: number; cost: number; batchNumber: string; expiryDate: string }[] }) => {
-  return await prisma.$transaction(async (tx) => {
-    const purchase = await tx.purchase.create({
-      data: {
-        supplierId: data.supplierId,
-        total: data.total,
-        status: 'COMPLETED',
-        items: {
-          create: data.items.map((i) => ({
-            medicineId: i.medicineId,
-            quantity: i.quantity,
-            cost: i.cost,
-          })),
-        },
-      },
-      include: { items: true },
-    })
-
-    // Recreate batches using the actual new item order
-    for (let index = 0; index < data.items.length; index++) {
-      const item = data.items[index]
-      const createdItem = purchase.items[index]
-      await tx.batch.create({
-        data: {
-          medicineId: item.medicineId,
-          batchNumber: item.batchNumber,
-          expiryDate: new Date(item.expiryDate),
-          quantity: item.quantity,
-          purchaseItemId: createdItem?.id,
-        },
-      })
-    }
-
-    await recordAudit({
-      action: 'PURCHASE_CREATE',
-      category: 'INVENTORY',
-      details: `Restock purchase order created for GH₵${data.total.toFixed(2)} (${data.items.length} product lines)`,
-      severity: 'INFO',
-      metadata: {
-        purchaseId: purchase.id,
-        supplierId: data.supplierId,
-        total: data.total,
-        itemCount: data.items.length,
-      },
-    })
-
-    return purchase
+ipcMain.handle('purchases:create', async (_, data: any) => {
+  return await purchaseService.createPurchase({
+    ...data,
+    deviceId: 'desktop-main-pos',
   })
 })
 
@@ -995,14 +763,49 @@ ipcMain.handle('print:receipt', async (_, htmlContent: string) => {
     console.error('Error reading hw.printerName setting:', err)
   }
 
+  // Wrap the receipt HTML fragment in a full document with proper
+  // thermal-printer-friendly @page rules and charset declaration
+  const wrappedHTML = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    @page {
+      margin: 0;
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 72mm;
+      max-width: 100%;
+      font-family: 'Courier New', Courier, monospace;
+      font-size: 11px;
+      color: #000;
+      background: #fff;
+      -webkit-print-color-adjust: exact;
+    }
+    body { padding: 2mm 4mm 2mm 2mm; }
+    table { border-collapse: collapse; width: 100%; }
+    hr { border: none; border-top: 1px dashed #000; margin: 4px 0; }
+  </style>
+</head>
+<body>${htmlContent}</body>
+</html>`
+
   const printWindow = new BrowserWindow({
     show: false,
+    width: 302,   // ~80mm at 96 DPI
+    height: 800,
     webPreferences: { nodeIntegration: true }
   })
-  printWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(htmlContent)}`)
+  printWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(wrappedHTML)}`)
 
   return new Promise((resolve) => {
     printWindow.webContents.on('did-finish-load', async () => {
+      // Small delay to ensure full render before printing
+      await new Promise((r) => setTimeout(r, 300))
+
       let printers: Electron.PrinterInfo[] = []
       try {
         printers = await printWindow.webContents.getPrintersAsync()
@@ -1013,6 +816,8 @@ ipcMain.handle('print:receipt', async (_, htmlContent: string) => {
       const printOptions: Electron.WebContentsPrintOptions = {
         silent: true,
         printBackground: true,
+        margins: { marginType: 'none' },
+        pageSize: { width: 80000, height: 297000 },  // 80mm × 297mm in microns
       }
 
       if (configuredPrinter) {
@@ -1059,10 +864,170 @@ ipcMain.handle('print:receipt', async (_, htmlContent: string) => {
 
       printWindow.webContents.print(printOptions, (success, failureReason) => {
         printWindow.close()
+        if (!success) {
+          console.error('Print failed:', failureReason)
+        }
         resolve({ success, failureReason })
       })
     })
   })
+})
+
+// ─── Cash Drawer ──────────────────────────────────────────────────────────────
+
+// Helper: send raw bytes directly to a Windows printer using winspool.drv WritePrinter API
+function sendRawBytesToPrinter(printerName: string, data: Buffer): Promise<{ success: boolean; error?: string }> {
+  const { execSync } = require('child_process')
+  const timestamp = Date.now()
+  const tmpBinFile = path.join(app.getPath('temp'), `drawer_kick_${timestamp}.bin`)
+  const tmpPs1File = path.join(app.getPath('temp'), `drawer_kick_${timestamp}.ps1`)
+
+  fs.writeFileSync(tmpBinFile, data)
+
+  // Write the PowerShell script to a temp file to avoid quote-escaping issues
+  const psScript = `
+Add-Type @'
+using System;
+using System.IO;
+using System.Runtime.InteropServices;
+
+public class RawPrint {
+    [StructLayout(LayoutKind.Sequential)] public struct DOCINFOA {
+        [MarshalAs(UnmanagedType.LPStr)] public string pDocName;
+        [MarshalAs(UnmanagedType.LPStr)] public string pOutputFile;
+        [MarshalAs(UnmanagedType.LPStr)] public string pDatatype;
+    }
+    [DllImport("winspool.Drv", EntryPoint="OpenPrinterA", SetLastError=true)]
+    public static extern bool OpenPrinter(string p, out IntPtr hP, IntPtr d);
+    [DllImport("winspool.Drv", EntryPoint="ClosePrinter", SetLastError=true)]
+    public static extern bool ClosePrinter(IntPtr hP);
+    [DllImport("winspool.Drv", EntryPoint="StartDocPrinterA", SetLastError=true)]
+    public static extern bool StartDocPrinter(IntPtr hP, int l, ref DOCINFOA di);
+    [DllImport("winspool.Drv", EntryPoint="EndDocPrinter", SetLastError=true)]
+    public static extern bool EndDocPrinter(IntPtr hP);
+    [DllImport("winspool.Drv", EntryPoint="StartPagePrinter", SetLastError=true)]
+    public static extern bool StartPagePrinter(IntPtr hP);
+    [DllImport("winspool.Drv", EntryPoint="EndPagePrinter", SetLastError=true)]
+    public static extern bool EndPagePrinter(IntPtr hP);
+    [DllImport("winspool.Drv", EntryPoint="WritePrinter", SetLastError=true)]
+    public static extern bool WritePrinter(IntPtr hP, IntPtr pB, int c, out int w);
+
+    public static bool Send(string name, byte[] data) {
+        IntPtr hP;
+        if (!OpenPrinter(name, out hP, IntPtr.Zero)) return false;
+        DOCINFOA di = new DOCINFOA();
+        di.pDocName = "CashDrawerKick";
+        di.pDatatype = "RAW";
+        if (!StartDocPrinter(hP, 1, ref di)) { ClosePrinter(hP); return false; }
+        if (!StartPagePrinter(hP)) { EndDocPrinter(hP); ClosePrinter(hP); return false; }
+        IntPtr pU = Marshal.AllocCoTaskMem(data.Length);
+        Marshal.Copy(data, 0, pU, data.Length);
+        int w; bool ok = WritePrinter(hP, pU, data.Length, out w);
+        Marshal.FreeCoTaskMem(pU);
+        EndPagePrinter(hP); EndDocPrinter(hP); ClosePrinter(hP);
+        return ok;
+    }
+}
+'@
+$bytes = [System.IO.File]::ReadAllBytes('${tmpBinFile.replace(/\\/g, '\\\\')}')
+$result = [RawPrint]::Send('${printerName.replace(/'/g, "''")}', $bytes)
+if ($result) { Write-Output 'OK' } else { Write-Output 'FAIL'; exit 1 }
+`
+  fs.writeFileSync(tmpPs1File, psScript, 'utf-8')
+
+  try {
+    const result = execSync(
+      `powershell -NoProfile -ExecutionPolicy Bypass -File "${tmpPs1File}"`,
+      { timeout: 10000, encoding: 'utf-8' }
+    )
+    return Promise.resolve({ success: result.trim().includes('OK') })
+  } catch (err: any) {
+    console.error('Raw print error:', err.message)
+    return Promise.resolve({ success: false, error: err.message })
+  } finally {
+    try { fs.unlinkSync(tmpBinFile) } catch (_) { /* ignore */ }
+    try { fs.unlinkSync(tmpPs1File) } catch (_) { /* ignore */ }
+  }
+}
+
+ipcMain.handle('cash-drawer:open', async () => {
+  try {
+    // Read drawer settings
+    const drawerEnabledSetting = await prisma.setting.findUnique({ where: { key: 'hw.drawerEnabled' } })
+    if (drawerEnabledSetting?.value !== 'true') {
+      return { success: false, reason: 'Cash drawer is disabled in settings' }
+    }
+
+    const drawerPortSetting = await prisma.setting.findUnique({ where: { key: 'hw.drawerPort' } })
+    const drawerPort = drawerPortSetting?.value?.trim() || 'Via Printer'
+
+    const pulseSetting = await prisma.setting.findUnique({ where: { key: 'hw.drawerPulseMs' } })
+    const pulseMs = Math.min(Math.max(parseInt(pulseSetting?.value || '200', 10) || 200, 100), 999)
+
+    // ESC/POS cash drawer kick commands:
+    // Pin 0 (pin 2) and Pin 1 (pin 5) to support both RJ11/RJ12 pinouts
+    // on-time and off-time are in units of 2ms
+    const onTime = Math.min(Math.round(pulseMs / 2), 255)
+    const offTime = Math.min(Math.round(pulseMs / 2), 255)
+    const kickBytes = Buffer.from([
+      0x1B, 0x70, 0x00, onTime, offTime, // ESC p 0 (pin 2)
+      0x1B, 0x70, 0x01, onTime, offTime, // ESC p 1 (pin 5)
+      0x10, 0x14, 0x01, 0x00, 0x05,       // DLE DC4 real-time kick
+      0x07                                // BEL trigger
+    ])
+
+    if (drawerPort === 'Via Printer') {
+      // Send kick command through the receipt printer as RAW data
+      let printerName = ''
+      try {
+        const setting = await prisma.setting.findUnique({ where: { key: 'hw.printerName' } })
+        if (setting?.value) printerName = setting.value.trim()
+      } catch (_) { /* use default */ }
+
+      if (!printerName) {
+        // Fallback: look for an installed thermal/receipt printer
+        try {
+          const { execSync } = require('child_process')
+          const output = execSync('powershell -Command "Get-Printer | Select-Object -ExpandProperty Name"', { encoding: 'utf-8' })
+          const names = output.split(/\r?\n/).map((s: string) => s.trim()).filter(Boolean)
+          const matched = names.find((n: string) => !n.includes('OneNote') && !n.includes('PDF') && !n.includes('XPS') && !n.includes('Fax'))
+          if (matched) printerName = matched
+        } catch (_) { /* ignore */ }
+      }
+
+      if (!printerName) {
+        return { success: false, reason: 'No receipt printer configured. Set the printer name in Settings → Receipt Printer.' }
+      }
+
+      const result = await sendRawBytesToPrinter(printerName, kickBytes)
+      if (result.success) {
+        return { success: true }
+      } else {
+        return { success: false, reason: result.error || 'Failed to send drawer kick command to printer' }
+      }
+    } else {
+      // Direct COM port: write raw ESC/POS bytes to the serial port
+      const { execSync } = require('child_process')
+      const tmpFile = path.join(app.getPath('temp'), 'drawer_kick.bin')
+      fs.writeFileSync(tmpFile, kickBytes)
+
+      try {
+        execSync(
+          `powershell -NoProfile -Command "$port = New-Object System.IO.Ports.SerialPort('${drawerPort}', 9600); $port.Open(); $bytes = [System.IO.File]::ReadAllBytes('${tmpFile.replace(/\\/g, '\\\\')}'); $port.Write($bytes, 0, $bytes.Length); $port.Close()"`,
+          { timeout: 5000 }
+        )
+        return { success: true }
+      } catch (err: any) {
+        console.error('Cash drawer COM port error:', err.message)
+        return { success: false, reason: err.message }
+      } finally {
+        try { fs.unlinkSync(tmpFile) } catch (_) { /* ignore */ }
+      }
+    }
+  } catch (err: any) {
+    console.error('Cash drawer error:', err)
+    return { success: false, reason: err.message }
+  }
 })
 
 // ─── Reports ──────────────────────────────────────────────────────────────────
@@ -1524,103 +1489,66 @@ ipcMain.handle('sync:getFullState', async () => {
   }
 })
 
-// ─── Bidirectional Reconcile IPC Handlers (Cloud -> SQLite) ─────────────────
-ipcMain.handle('sync:reconcileCloudProducts', async (_, cloudProducts: any[]) => {
-  if (!Array.isArray(cloudProducts) || cloudProducts.length === 0) return { count: 0 }
-
-  const categories = await prisma.category.findMany()
-  const catMap = new Map<string, string>()
-  categories.forEach(c => catMap.set(c.name.toLowerCase().trim(), c.id))
-
-  let importedCount = 0
-  for (const p of cloudProducts) {
-    const rawCatName = (p.category_name || 'General').trim()
-    let catId = catMap.get(rawCatName.toLowerCase())
-    if (!catId) {
-      const newCat = await prisma.category.create({
-        data: { name: rawCatName }
-      })
-      catId = newCat.id
-      catMap.set(newCat.name.toLowerCase().trim(), catId)
-    }
-
-    const existing = await prisma.medicine.findFirst({
-      where: {
-        OR: [
-          { id: p.id },
-          { sku: p.sku }
-        ]
-      }
-    })
-
-    if (!existing) {
-      await prisma.medicine.create({
-        data: {
-          id: p.id,
-          name: p.name,
-          genericName: p.generic_name || null,
-          sku: p.sku,
-          categoryId: catId,
-          price: Number(p.price) || 0,
-          cost: Number(p.cost) || 0,
-          minStockLevel: Number(p.min_stock_level) || 10
-        }
-      })
-      importedCount++
-    } else {
-      await prisma.medicine.update({
-        where: { id: existing.id },
-        data: {
-          name: p.name,
-          genericName: p.generic_name || null,
-          price: Number(p.price) || 0,
-          cost: Number(p.cost) || 0,
-          minStockLevel: Number(p.min_stock_level) || 10,
-          categoryId: catId
-        }
-      })
-    }
-  }
-
-  return { importedCount }
+// ─── Phase 2 Authoritative Synchronization Engine IPC Handlers ──────────────
+ipcMain.handle('sync:getStatus', async () => {
+  return await syncEngine.getSyncState()
 })
 
-ipcMain.handle('sync:reconcileCloudBatches', async (_, cloudBatches: any[]) => {
-  if (!Array.isArray(cloudBatches) || cloudBatches.length === 0) return { count: 0 }
+ipcMain.handle('sync:flush', async (_, batchSize?: number) => {
+  return await syncEngine.flushOutboxBatch(batchSize)
+})
 
-  let importedCount = 0
-  for (const b of cloudBatches) {
-    if (!b.product_id) continue
-    const medExists = await prisma.medicine.findUnique({ where: { id: b.product_id } })
-    if (!medExists) continue
+ipcMain.handle('sync:pull', async (_, limit?: number) => {
+  return await syncEngine.pullCloudChanges(limit)
+})
 
-    const existing = await prisma.batch.findUnique({ where: { id: b.id } })
-    const expDate = b.expiry_date ? new Date(b.expiry_date) : new Date(Date.now() + 365 * 24 * 3600 * 1000)
+ipcMain.handle('sync:reconcile', async () => {
+  return await syncEngine.getReconciliationReport()
+})
 
-    if (!existing) {
-      await prisma.batch.create({
-        data: {
-          id: b.id,
-          medicineId: b.product_id,
-          batchNumber: b.batch_number || `BAT-${Date.now().toString().slice(-6)}`,
-          expiryDate: expDate,
-          quantity: Number(b.quantity) || 0
-        }
-      })
-      importedCount++
-    } else {
-      await prisma.batch.update({
-        where: { id: b.id },
-        data: {
-          batchNumber: b.batch_number || existing.batchNumber,
-          expiryDate: expDate,
-          quantity: Number(b.quantity) || 0
-        }
-      })
-    }
-  }
+ipcMain.handle('sync:getOutbox', async (_, status?: string, limit?: number) => {
+  const where: any = {}
+  if (status) where.status = status
+  return await prisma.syncOutbox.findMany({
+    where,
+    orderBy: { createdAt: 'desc' },
+    take: limit ? Number(limit) : 100,
+  })
+})
 
-  return { importedCount }
+ipcMain.handle('sync:getSessions', async (_, limit?: number) => {
+  return await prisma.syncSession.findMany({
+    orderBy: { startedAt: 'desc' },
+    take: limit ? Number(limit) : 40,
+  })
+})
+
+ipcMain.handle('sync:retryDeadLetter', async () => {
+  const updated = await prisma.syncOutbox.updateMany({
+    where: { status: 'DEAD_LETTER' },
+    data: {
+      status: 'PENDING',
+      retryCount: 0,
+      nextAttemptAt: null,
+      errorMessage: null,
+      lastError: null,
+    },
+  })
+  return { success: true, count: updated.count }
+})
+
+// ─── Cloud Sync Reconciliation IPC Handlers ─────────────────────────────────
+// Local SQLite is the authoritative transactional source of truth for products & stock.
+// The cloud is primarily for remote monitoring and control.
+// Under NO circumstances should missing or deleted local products/batches be recreated from the cloud.
+ipcMain.handle('sync:reconcileCloudProducts', async (_, _cloudProducts: any[]) => {
+  // Cloud products are not injected into local SQLite to prevent resurrection of deleted items.
+  return { importedCount: 0 }
+})
+
+ipcMain.handle('sync:reconcileCloudBatches', async (_, _cloudBatches: any[]) => {
+  // Cloud batches are not injected into local SQLite to prevent resurrection of deleted items.
+  return { importedCount: 0 }
 })
 
 // ─── Cloud Sync Backend Credentials (.env / Environment) ────────────────────

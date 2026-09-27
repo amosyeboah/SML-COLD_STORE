@@ -68,7 +68,10 @@ const STORAGE_KEYS = {
   SALES: 'sml_coldstore_sales',
   SETTINGS: 'sml_coldstore_settings',
   PRESCRIPTIONS: 'sml_coldstore_prescriptions',
-  AUDIT_LOGS: 'sml_coldstore_audit_logs'
+  AUDIT_LOGS: 'sml_coldstore_audit_logs',
+  DELETED_MEDICINE_IDS: 'sml_coldstore_deleted_medicine_ids',
+  DELETED_BATCH_IDS: 'sml_coldstore_deleted_batch_ids',
+  SEEDED: 'sml_coldstore_initialized_flag'
 }
 
 function getItem<T>(key: string, defaultValue: T): T {
@@ -177,23 +180,31 @@ export async function fetchCloudSalesIfAvailable(): Promise<any[]> {
 
 /**
  * Fetches latest product catalog directly from Supabase Cloud.
- * Caches and updates local storage so web portal displays real-time products and stock.
+ * Caches and updates local storage, filtering out any locally deleted tombstones.
  */
 export async function fetchCloudProductsIfAvailable(): Promise<any[]> {
   const localMeds = getItem<any[]>(STORAGE_KEYS.MEDICINES, [])
+  const deletedIds = new Set(getItem<string[]>(STORAGE_KEYS.DELETED_MEDICINE_IDS, []))
   const client = getSupabaseClient()
   if (!client || !navigator.onLine) {
-    return localMeds
+    return localMeds.filter((m) => !deletedIds.has(m.id))
   }
 
   try {
+    // Proactively purge any locally deleted tombstones from the cloud DB
+    if (deletedIds.size > 0) {
+      const idsToDelete = Array.from(deletedIds)
+      await client.from('cloud_batches').delete().in('product_id', idsToDelete).catch(() => {})
+      await client.from('cloud_products').delete().in('id', idsToDelete).catch(() => {})
+    }
+
     const { data: cloudProducts, error } = await client
       .from('cloud_products')
       .select('*')
       .order('name', { ascending: true })
 
     if (error || !cloudProducts || cloudProducts.length === 0) {
-      return localMeds
+      return localMeds.filter((m) => !deletedIds.has(m.id))
     }
 
     // Build categories mapping
@@ -212,7 +223,10 @@ export async function fetchCloudProductsIfAvailable(): Promise<any[]> {
     })
     setItem(STORAGE_KEYS.CATEGORIES, updatedCats)
 
-    const mappedMeds = cloudProducts.map((p) => ({
+    // Filter out deleted items from cloud results
+    const validCloudProducts = cloudProducts.filter((p) => !deletedIds.has(p.id))
+
+    const mappedMeds = validCloudProducts.map((p) => ({
       id: p.id,
       name: p.name,
       genericName: p.generic_name || undefined,
@@ -225,38 +239,62 @@ export async function fetchCloudProductsIfAvailable(): Promise<any[]> {
       minStockLevel: Number(p.min_stock_level) || 10,
     }))
 
-    const cloudIds = new Set(mappedMeds.map((m) => m.id))
-    const localOnly = localMeds.filter((m) => !cloudIds.has(m.id))
-    const mergedMeds = [...mappedMeds, ...localOnly]
+    // Local storage is authoritative. If local catalog exists, never resurrect missing items.
+    const localMap = new Map(localMeds.filter((m) => !deletedIds.has(m.id)).map((m) => [m.id, m]))
+    
+    // Only import new cloud products if local catalogue was never initialized
+    if (localMap.size === 0) {
+      mappedMeds.forEach((m) => localMap.set(m.id, m))
+    } else {
+      // Refresh metadata for existing products only
+      mappedMeds.forEach((cm) => {
+        if (localMap.has(cm.id)) {
+          const current = localMap.get(cm.id)!
+          localMap.set(cm.id, { ...cm, ...current })
+        }
+      })
+    }
+
+    const mergedMeds = Array.from(localMap.values())
     setItem(STORAGE_KEYS.MEDICINES, mergedMeds)
     return mergedMeds
   } catch (err) {
     console.warn('Failed to fetch cloud products in mobileStorage:', err)
-    return localMeds
+    return localMeds.filter((m) => !deletedIds.has(m.id))
   }
 }
 
 /**
- * Fetches latest batches and freezer stock lots directly from Supabase Cloud.
+ * Fetches latest batches directly from Supabase Cloud, respecting local deletions.
  */
 export async function fetchCloudBatchesIfAvailable(): Promise<any[]> {
   const localBatches = getItem<any[]>(STORAGE_KEYS.BATCHES, [])
+  const deletedMedIds = new Set(getItem<string[]>(STORAGE_KEYS.DELETED_MEDICINE_IDS, []))
+  const deletedBatchIds = new Set(getItem<string[]>(STORAGE_KEYS.DELETED_BATCH_IDS, []))
   const client = getSupabaseClient()
   if (!client || !navigator.onLine) {
-    return localBatches
+    return localBatches.filter((b) => !deletedBatchIds.has(b.id) && !deletedMedIds.has(b.medicineId))
   }
 
   try {
+    if (deletedBatchIds.size > 0) {
+      await client.from('cloud_batches').delete().in('id', Array.from(deletedBatchIds)).catch(() => {})
+    }
+
     const { data: cloudBatches, error } = await client
       .from('cloud_batches')
       .select('*')
       .order('expiry_date', { ascending: true })
 
     if (error || !cloudBatches || cloudBatches.length === 0) {
-      return localBatches
+      return localBatches.filter((b) => !deletedBatchIds.has(b.id) && !deletedMedIds.has(b.medicineId))
     }
 
-    const mappedBatches = cloudBatches.map((b) => ({
+    const validCloudBatches = cloudBatches.filter(
+      (b) => !deletedBatchIds.has(b.id) && !deletedMedIds.has(b.product_id)
+    )
+
+    const mappedBatches = validCloudBatches.map((b) => ({
       id: b.id,
       medicineId: b.product_id,
       batchNumber: b.batch_number,
@@ -264,14 +302,29 @@ export async function fetchCloudBatchesIfAvailable(): Promise<any[]> {
       quantity: Number(b.quantity) || 0,
     }))
 
-    const cloudIds = new Set(mappedBatches.map((b) => b.id))
-    const localOnly = localBatches.filter((b) => !cloudIds.has(b.id))
-    const mergedBatches = [...mappedBatches, ...localOnly]
+    const localMap = new Map(
+      localBatches
+        .filter((b) => !deletedBatchIds.has(b.id) && !deletedMedIds.has(b.medicineId))
+        .map((b) => [b.id, b])
+    )
+
+    if (localMap.size === 0) {
+      mappedBatches.forEach((b) => localMap.set(b.id, b))
+    } else {
+      mappedBatches.forEach((cb) => {
+        if (localMap.has(cb.id)) {
+          const current = localMap.get(cb.id)!
+          localMap.set(cb.id, { ...cb, ...current })
+        }
+      })
+    }
+
+    const mergedBatches = Array.from(localMap.values())
     setItem(STORAGE_KEYS.BATCHES, mergedBatches)
     return mergedBatches
   } catch (err) {
     console.warn('Failed to fetch cloud batches in mobileStorage:', err)
-    return localBatches
+    return localBatches.filter((b) => !deletedBatchIds.has(b.id) && !deletedMedIds.has(b.medicineId))
   }
 }
 
@@ -556,15 +609,15 @@ async function seedInitialDataIfNeeded() {
     { id: 'ddd7b772-e061-4bd4-b28f-fa485d5b73e0', medicineId: '2341b5e9-f531-4cfc-9240-824e1b4c77dc', batchNumber: 'GAT-587575', expiryDate: '2028-06-22T00:00:00.000Z', quantity: 8 }
   ]
 
-  // Check if current stored medicines are empty or contain obsolete dummy items
-  const currentMeds = getItem<any[]>(STORAGE_KEYS.MEDICINES, [])
-  const hasLegacyDummy = currentMeds.some(m => m.id === 'med-1' || m.id === 'med-2' || m.id === 'med-3')
-  if (currentMeds.length === 0 || hasLegacyDummy) {
+  // Seed catalog ONLY on very first initialization, never resurrect deleted items
+  const alreadySeeded = getItem<boolean>(STORAGE_KEYS.SEEDED, false)
+  if (!alreadySeeded) {
     setItem(STORAGE_KEYS.CATEGORIES, initialCategories)
     setItem(STORAGE_KEYS.SUPPLIERS, initialSuppliers)
     setItem(STORAGE_KEYS.CUSTOMERS, initialCustomers)
     setItem(STORAGE_KEYS.MEDICINES, initialMedicines)
     setItem(STORAGE_KEYS.BATCHES, initialBatches)
+    setItem(STORAGE_KEYS.SEEDED, true)
   }
 
   // Initial Settings
@@ -995,6 +1048,13 @@ export const mobileApi = {
     throw new Error('Medicine not found')
   },
   deleteMedicine: async (id: string) => {
+    // 1. Record in persistent tombstones
+    const deletedIds = getItem<string[]>(STORAGE_KEYS.DELETED_MEDICINE_IDS, [])
+    if (!deletedIds.includes(id)) {
+      deletedIds.push(id)
+      setItem(STORAGE_KEYS.DELETED_MEDICINE_IDS, deletedIds)
+    }
+
     const medicines = getItem<any[]>(STORAGE_KEYS.MEDICINES, [])
     const batches = getItem<any[]>(STORAGE_KEYS.BATCHES, [])
     setItem(STORAGE_KEYS.MEDICINES, medicines.filter(m => m.id !== id))
@@ -1003,8 +1063,12 @@ export const mobileApi = {
 
     const client = getSupabaseClient()
     if (client && navigator.onLine) {
-      client.from('cloud_products').delete().eq('id', id).then(() => {}).catch(() => {})
-      client.from('cloud_batches').delete().eq('product_id', id).then(() => {}).catch(() => {})
+      try {
+        await client.from('cloud_batches').delete().eq('product_id', id)
+        await client.from('cloud_products').delete().eq('id', id)
+      } catch (err) {
+        console.warn('Failed to delete medicine from cloud immediately', err)
+      }
     }
   },
 
@@ -1069,12 +1133,22 @@ export const mobileApi = {
     throw new Error('Batch not found')
   },
   deleteBatch: async (id: string) => {
+    const deletedBatchIds = getItem<string[]>(STORAGE_KEYS.DELETED_BATCH_IDS, [])
+    if (!deletedBatchIds.includes(id)) {
+      deletedBatchIds.push(id)
+      setItem(STORAGE_KEYS.DELETED_BATCH_IDS, deletedBatchIds)
+    }
+
     const batches = getItem<any[]>(STORAGE_KEYS.BATCHES, [])
     setItem(STORAGE_KEYS.BATCHES, batches.filter(b => b.id !== id))
 
     const client = getSupabaseClient()
     if (client && navigator.onLine) {
-      client.from('cloud_batches').delete().eq('id', id).then(() => {}).catch(() => {})
+      try {
+        await client.from('cloud_batches').delete().eq('id', id)
+      } catch (err) {
+        console.warn('Failed to delete batch from cloud immediately', err)
+      }
     }
   },
 
@@ -1281,6 +1355,40 @@ export const mobileApi = {
 
   getSales: async () => {
     return await fetchCloudSalesIfAvailable()
+  },
+
+  refundSale: async (id: string) => {
+    const sales = getItem<any[]>(STORAGE_KEYS.SALES, [])
+    const saleIndex = sales.findIndex((s: any) => s.id === id)
+    if (saleIndex === -1) throw new Error('Sale not found')
+    const sale = sales[saleIndex]
+
+    // Return items to batches
+    const batches = getItem<any[]>(STORAGE_KEYS.BATCHES, [])
+    if (sale.items && Array.isArray(sale.items)) {
+      for (const item of sale.items) {
+        const batch = batches.find((b: any) => b.id === item.batchId)
+        if (batch) {
+          batch.quantity = (batch.quantity || 0) + (Number(item.quantity) || 0)
+        }
+      }
+      setItem(STORAGE_KEYS.BATCHES, batches)
+      pushCloudStateMirror('STATE_BATCHES', 'BATCHES', 'batches', batches).catch(() => {})
+    }
+
+    // Remove sale
+    sales.splice(saleIndex, 1)
+    setItem(STORAGE_KEYS.SALES, sales)
+    pushCloudStateMirror('STATE_SALES', 'SALES', 'sales', sales).catch(() => {})
+
+    // Delete from Supabase if online
+    const client = getSupabaseClient()
+    if (client && navigator.onLine) {
+      client.from('cloud_sale_items').delete().eq('sale_id', id).then(() => {}).catch(() => {})
+      client.from('cloud_sales').delete().eq('id', id).then(() => {}).catch(() => {})
+    }
+
+    return { success: true, message: 'Sale successfully refunded' }
   },
 
   // Prescriptions
@@ -1660,6 +1768,9 @@ export const mobileApi = {
   getPrinters: async () => [
     { name: 'Default Printer', isDefault: true }
   ],
+  openCashDrawer: async () => {
+    return { success: false, reason: 'Cash drawer not available on this device' }
+  },
 
   // Settings
   getSettings: async () => getItem(STORAGE_KEYS.SETTINGS, {

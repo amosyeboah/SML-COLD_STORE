@@ -31,7 +31,6 @@ import {
 } from 'lucide-react'
 import type { Category, Customer } from '@/types'
 import { cn } from '@/utils'
-import { enqueueSyncItem } from '@/services/sync/syncQueue'
 
 export interface SplitPaymentEntry {
   method: 'CASH' | 'MOBILE'
@@ -743,7 +742,18 @@ function CartPanelContent({
 
       <div className="grid grid-cols-2 gap-2 bg-white px-4 pb-4">
         <button
-          onClick={() => setToast({ type: 'success', message: 'Cash drawer trigger sent' })}
+          onClick={async () => {
+            try {
+              const result = await window.api.openCashDrawer()
+              if (result?.success) {
+                setToast({ type: 'success', message: 'Cash drawer opened' })
+              } else {
+                setToast({ type: 'error', message: result?.reason || 'Failed to open cash drawer' })
+              }
+            } catch {
+              setToast({ type: 'error', message: 'Cash drawer not available' })
+            }
+          }}
           className="flex items-center justify-center gap-1.5 rounded-xl border border-slate-200 py-2 text-xs font-medium text-slate-500 transition-colors hover:bg-slate-50 active:scale-95"
         >
           <Archive className="h-3.5 w-3.5" />
@@ -914,17 +924,15 @@ export default function POS() {
       }
 
       const receiptHTML = `
-        <div style="font-family:'Courier New',Courier,monospace;width:290px;padding:12px;margin:0 auto;color:#000;font-size:12px;">
-          <h2 style="text-align:center;margin:0 0 4px 0;font-size:16px;font-weight:bold;">${storeName.toUpperCase()}</h2>
-          <p style="text-align:center;margin:0;font-size:11px;">${tagline}</p>
+        <div style="font-family:'Courier New',Courier,monospace;width:100%;padding:4px 0;margin:0;color:#000;font-size:11px;">
+          <h2 style="text-align:center;margin:0 0 4px 0;font-size:14px;font-weight:bold;">${storeName.toUpperCase()}</h2>
           <p style="text-align:center;margin:2px 0 0 0;font-size:10px;">Store Tel: ${phone}</p>
-          <p style="text-align:center;margin:2px 0 0 0;font-size:10px;">WhatsApp: ${ownerPhone} | ${email}</p>
           <hr style="border-top:1px dashed #000;margin:8px 0;"/>
           <p style="margin:2px 0;font-size:11px;">Date: ${new Date().toLocaleString('en-GB')}</p>
           <p style="margin:2px 0;font-size:11px;">Receipt: INV-${sale.id.slice(0, 8).toUpperCase()}</p>
           ${paymentSectionHTML}
           <hr style="border-top:1px dashed #000;margin:8px 0;"/>
-          <table style="width:100%;font-size:11px;border-collapse:collapse;">
+          <table style="width:100%;font-size:10px;border-collapse:collapse;">
             <thead>
               <tr style="border-bottom:1px solid #000;text-align:left;">
                 <th style="padding:2px 0;">Item</th>
@@ -935,7 +943,7 @@ export default function POS() {
             <tbody>
               ${cart.map((item) => `
                 <tr>
-                  <td style="padding:3px 0;max-width:150px;word-break:break-word;">${item.medicine.name}</td>
+                  <td style="padding:3px 0;max-width:90px;word-break:break-word;">${item.medicine.name}</td>
                   <td style="text-align:center;vertical-align:top;padding:3px 0;">${item.quantity}</td>
                   <td style="text-align:right;vertical-align:top;padding:3px 0;">${currencySymbol}${(item.medicine.price * item.quantity).toFixed(2)}</td>
                 </tr>
@@ -943,7 +951,7 @@ export default function POS() {
             </tbody>
           </table>
           <hr style="border-top:1px dashed #000;margin:8px 0;"/>
-          <table style="width:100%;font-size:11px;">
+          <table style="width:100%;font-size:10px;">
             ${subtotalLine}
             ${discountLine}
             ${taxLine}
@@ -955,31 +963,15 @@ export default function POS() {
           <hr style="border-top:1px dashed #000;margin:8px 0;"/>
           <p style="text-align:center;margin:6px 0 2px 0;font-size:11px;font-weight:bold;">${footer}</p>
           <p style="text-align:center;margin:0;font-size:9px;color:#333;">Goods sold in good condition are not returnable once defrosted.</p>
+          <hr style="border-top:1px dashed #000;margin:8px 0;"/>
+          <p style="text-align:center;margin:0;font-size:9px;color:#555;">Software developed by Paylite<br/>www.mypaylite.com | 0207131415</p>
         </div>`
       await window.api.printReceipt(receiptHTML)
 
-      // Automatically enqueue to offline sync queue for UK Owner cloud update
-      try {
-        enqueueSyncItem('SALE', 'INSERT', {
-          id: sale.id,
-          total,
-          paymentMethod: isSplit
-            ? `SPLIT:CASH=${activePayments.filter((p) => p.method === 'CASH').reduce((sum, p) => sum + p.amount, 0)},MOBILE=${activePayments.filter((p) => p.method === 'MOBILE').reduce((sum, p) => sum + p.amount, 0)}`
-            : paymentMethod,
-          payments: activePayments,
-          date: new Date().toISOString(),
-          customerName: customers.find((c) => c.id === selectedCustomerId)?.name || 'Walk-in Customer',
-          items: cart.map((item) => ({
-            medicineId: item.medicine.id,
-            name: item.medicine.name,
-            sku: item.medicine.sku,
-            quantity: item.quantity,
-            price: item.medicine?.price ?? item.price ?? 0,
-            cost: item.medicine?.cost ?? item.cost ?? 0,
-          })),
-        })
-      } catch (syncErr) {
-        console.warn('Sync enqueue notice:', syncErr)
+      // Auto-open cash drawer for cash payments
+      const hasCashPayment = paymentMethod === 'CASH' || (isSplit && activePayments.some((p) => p.method === 'CASH' && p.amount > 0))
+      if (hasCashPayment) {
+        try { await window.api.openCashDrawer() } catch { /* drawer may not be enabled */ }
       }
 
       const finalChangeDue = typeof cashTendered === 'number'

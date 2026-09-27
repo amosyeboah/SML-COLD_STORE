@@ -282,31 +282,41 @@ export async function flushSyncQueue(): Promise<{
           if (error) uploadError = error
         } else if (item.entity === 'PRODUCT') {
           const product = item.payload
-          const { error } = await client.from('cloud_products').upsert({
-            id: product.id,
-            store_id: 'sml_accra_main',
-            name: product.name,
-            generic_name: product.genericName || null,
-            sku: product.sku,
-            category_name: product.category?.name || product.categoryName || 'General',
-            price: product.price,
-            cost: product.cost || 0,
-            stock_quantity: product.stockQuantity || 0,
-            min_stock_level: product.minStockLevel || 10,
-            updated_at: new Date().toISOString(),
-          })
-          if (error) uploadError = error
+          if (item.action === 'DELETE') {
+            const { error } = await client.from('cloud_products').delete().eq('id', product.id)
+            if (error) uploadError = error
+          } else {
+            const { error } = await client.from('cloud_products').upsert({
+              id: product.id,
+              store_id: 'sml_accra_main',
+              name: product.name,
+              generic_name: product.genericName || null,
+              sku: product.sku,
+              category_name: product.category?.name || product.categoryName || 'General',
+              price: product.price,
+              cost: product.cost || 0,
+              stock_quantity: product.stockQuantity || 0,
+              min_stock_level: product.minStockLevel || 10,
+              updated_at: new Date().toISOString(),
+            })
+            if (error) uploadError = error
+          }
         } else if (item.entity === 'BATCH') {
           const batch = item.payload
-          const { error } = await client.from('cloud_batches').upsert({
-            id: batch.id,
-            product_id: batch.medicineId,
-            batch_number: batch.batchNumber,
-            expiry_date: batch.expiryDate,
-            quantity: batch.quantity,
-            updated_at: new Date().toISOString(),
-          })
-          if (error) uploadError = error
+          if (item.action === 'DELETE') {
+            const { error } = await client.from('cloud_batches').delete().eq('id', batch.id)
+            if (error) uploadError = error
+          } else {
+            const { error } = await client.from('cloud_batches').upsert({
+              id: batch.id,
+              product_id: batch.medicineId,
+              batch_number: batch.batchNumber,
+              expiry_date: batch.expiryDate,
+              quantity: batch.quantity,
+              updated_at: new Date().toISOString(),
+            })
+            if (error) uploadError = error
+          }
         }
 
         if (uploadError) {
@@ -422,61 +432,74 @@ export async function reconcileAllSalesWithCloud(): Promise<{
   // 2. If running in Electron Desktop App, perform bidirectional reconciliation with Supabase
   if (typeof window !== 'undefined' && (window as any).api?.getSales) {
     try {
-      // 2a. Bidirectional Reconcile Products
-      // First: pull any products from Cloud down into local SQLite database
-      const { data: cloudProductsData } = await client.from('cloud_products').select('*')
-      if (Array.isArray(cloudProductsData) && cloudProductsData.length > 0 && (window as any).api?.reconcileCloudProducts) {
-        await (window as any).api.reconcileCloudProducts(cloudProductsData).catch((err: any) => {
-          console.warn('Failed to reconcile cloud products into local DB:', err)
-        })
-      }
-
-      // Second: push any locally updated products up to Cloud
+      // 2a. Reconcile Products (Local SQLite is Authoritative -> Cloud DB for Monitoring)
       if ((window as any).api?.getMedicines) {
         const allDbMeds = await (window as any).api.getMedicines()
-        if (Array.isArray(allDbMeds) && allDbMeds.length > 0) {
-          const cloudMeds = allDbMeds.map((m: any) => {
-            const totalQty = (m.batches || []).reduce((acc: number, b: any) => acc + (Number(b.quantity) || 0), 0)
-            return {
-              id: m.id,
-              store_id: 'sml_accra_main',
-              name: m.name,
-              generic_name: m.genericName || null,
-              sku: m.sku,
-              category_name: m.category?.name || 'General',
-              price: Number(m.price) || 0,
-              cost: Number(m.cost) || 0,
-              stock_quantity: totalQty,
-              min_stock_level: Number(m.minStockLevel) || 10,
-              updated_at: new Date().toISOString()
+        if (Array.isArray(allDbMeds)) {
+          const dbMedIds = new Set(allDbMeds.map((m: any) => m.id))
+
+          // 1. Fetch current cloud products to find and purge any deleted orphans
+          const { data: cloudProductsData } = await client.from('cloud_products').select('id')
+          if (Array.isArray(cloudProductsData) && cloudProductsData.length > 0) {
+            const zombies = cloudProductsData.filter((cp: any) => !dbMedIds.has(cp.id))
+            if (zombies.length > 0) {
+              const zombieIds = zombies.map((z: any) => z.id)
+              await client.from('cloud_batches').delete().in('product_id', zombieIds).catch(() => {})
+              await client.from('cloud_products').delete().in('id', zombieIds).catch(() => {})
             }
-          })
-          await client.from('cloud_products').upsert(cloudMeds)
+          }
+
+          // 2. Push authoritative local products up to Cloud
+          if (allDbMeds.length > 0) {
+            const cloudMeds = allDbMeds.map((m: any) => {
+              const totalQty = (m.batches || []).reduce((acc: number, b: any) => acc + (Number(b.quantity) || 0), 0)
+              return {
+                id: m.id,
+                store_id: 'sml_accra_main',
+                name: m.name,
+                generic_name: m.genericName || null,
+                sku: m.sku,
+                category_name: m.category?.name || 'General',
+                price: Number(m.price) || 0,
+                cost: Number(m.cost) || 0,
+                stock_quantity: totalQty,
+                min_stock_level: Number(m.minStockLevel) || 10,
+                updated_at: new Date().toISOString()
+              }
+            })
+            await client.from('cloud_products').upsert(cloudMeds)
+          }
         }
       }
 
-      // 2b. Bidirectional Reconcile Batches
-      // First: pull any cloud batches down into local SQLite
-      const { data: cloudBatchesData } = await client.from('cloud_batches').select('*')
-      if (Array.isArray(cloudBatchesData) && cloudBatchesData.length > 0 && (window as any).api?.reconcileCloudBatches) {
-        await (window as any).api.reconcileCloudBatches(cloudBatchesData).catch((err: any) => {
-          console.warn('Failed to reconcile cloud batches into local DB:', err)
-        })
-      }
-
-      // Second: push local batches up to Cloud
+      // 2b. Reconcile Batches (Local SQLite is Authoritative -> Cloud DB for Monitoring)
       if ((window as any).api?.getBatches) {
         const allDbBatches = await (window as any).api.getBatches()
-        if (Array.isArray(allDbBatches) && allDbBatches.length > 0) {
-          const cloudBatches = allDbBatches.map((b: any) => ({
-            id: b.id,
-            product_id: b.medicineId,
-            batch_number: b.batchNumber,
-            expiry_date: b.expiryDate instanceof Date ? b.expiryDate.toISOString() : new Date(b.expiryDate).toISOString(),
-            quantity: Number(b.quantity) || 0,
-            updated_at: new Date().toISOString()
-          }))
-          await client.from('cloud_batches').upsert(cloudBatches)
+        if (Array.isArray(allDbBatches)) {
+          const dbBatchIds = new Set(allDbBatches.map((b: any) => b.id))
+
+          // 1. Fetch cloud batches to find and purge deleted orphan batches
+          const { data: cloudBatchesData } = await client.from('cloud_batches').select('id')
+          if (Array.isArray(cloudBatchesData) && cloudBatchesData.length > 0) {
+            const zombieBatches = cloudBatchesData.filter((cb: any) => !dbBatchIds.has(cb.id))
+            if (zombieBatches.length > 0) {
+              const zombieBatchIds = zombieBatches.map((zb: any) => zb.id)
+              await client.from('cloud_batches').delete().in('id', zombieBatchIds).catch(() => {})
+            }
+          }
+
+          // 2. Push authoritative local batches up to Cloud
+          if (allDbBatches.length > 0) {
+            const cloudBatches = allDbBatches.map((b: any) => ({
+              id: b.id,
+              product_id: b.medicineId,
+              batch_number: b.batchNumber,
+              expiry_date: b.expiryDate instanceof Date ? b.expiryDate.toISOString() : new Date(b.expiryDate).toISOString(),
+              quantity: Number(b.quantity) || 0,
+              updated_at: new Date().toISOString()
+            }))
+            await client.from('cloud_batches').upsert(cloudBatches)
+          }
         }
       }
 

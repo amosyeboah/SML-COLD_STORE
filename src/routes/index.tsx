@@ -5,6 +5,7 @@ import AuthLayout from '@/layouts/AuthLayout'
 import LoginPage from '@/pages/Login'
 import Dashboard from '@/pages/Dashboard'
 import POS from '@/pages/POS'
+import SalesHistory from '@/pages/SalesHistory'
 import Medicines from '@/pages/Medicines'
 import Inventory from '@/pages/Inventory'
 
@@ -36,6 +37,7 @@ export const router = createHashRouter([
           { index: true, element: <Navigate to="/dashboard" replace /> },
           { path: 'dashboard', element: <Dashboard /> },
           { path: 'pos', element: <POS /> },
+          { path: 'sales-history', element: <SalesHistory /> },
           { path: 'medicines', element: <Medicines /> },
           { path: 'products', element: <Navigate to="/medicines" replace /> },
           { path: 'inventory', element: <RoleGuard allowedRoles={['ADMIN', 'MANAGER']}><Inventory /></RoleGuard> },

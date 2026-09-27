@@ -43,28 +43,30 @@ model Category {
 }
 
 model Medicine {
-  id            String     @id @default(uuid())
+  id            String          @id @default(uuid())
   name          String
   genericName   String?
-  sku           String     @unique // Barcode/SKU
+  sku           String          @unique // Barcode/SKU
   categoryId    String
-  category      Category   @relation(fields: [categoryId], references: [id])
-  price         Float      // Selling price
-  cost          Float      // Default purchase cost
-  minStockLevel Int        @default(10)
+  category      Category        @relation(fields: [categoryId], references: [id])
+  price         Float           // Selling price
+  cost          Float           // Default purchase cost
+  minStockLevel Int             @default(10)
   batches       Batch[]
+  stockMovements StockMovement[]
 }
 
 model Batch {
-  id             String         @id @default(uuid())
+  id             String          @id @default(uuid())
   medicineId     String
-  medicine       Medicine       @relation(fields: [medicineId], references: [id])
+  medicine       Medicine        @relation(fields: [medicineId], references: [id])
   batchNumber    String
   expiryDate     DateTime
-  quantity       Int            // Current stock in this batch
+  quantity       Int             // Current stock in this batch
   purchaseItemId String?
-  purchaseItem   PurchaseItem?  @relation(fields: [purchaseItemId], references: [id])
+  purchaseItem   PurchaseItem?   @relation(fields: [purchaseItemId], references: [id])
   saleItems      SaleItem[]
+  stockMovements StockMovement[]
 }
 
 model Purchase {
@@ -74,6 +76,8 @@ model Purchase {
   date       DateTime       @default(now())
   total      Float
   status     String         // PENDING, COMPLETED
+  deviceId   String?
+  device     Device?        @relation(fields: [deviceId], references: [deviceId])
   items      PurchaseItem[]
 }
 
@@ -88,15 +92,17 @@ model PurchaseItem {
 }
 
 model Sale {
-  id           String         @id @default(uuid())
-  customerId   String?
-  customer     Customer?      @relation(fields: [customerId], references: [id])
-  date         DateTime       @default(now())
-  total        Float
-  paymentMethod String        // CASH, MOBILE, CARD, SPLIT
-  payments     SalePayment[]
-  items        SaleItem[]
-  prescription Prescription?
+  id            String         @id @default(uuid())
+  customerId    String?
+  customer      Customer?      @relation(fields: [customerId], references: [id])
+  date          DateTime       @default(now())
+  total         Float
+  paymentMethod String         // CASH, MOBILE, CARD, SPLIT
+  deviceId      String?
+  device        Device?        @relation(fields: [deviceId], references: [deviceId])
+  payments      SalePayment[]
+  items         SaleItem[]
+  prescription  Prescription?
 }
 
 model SalePayment {
@@ -141,7 +147,123 @@ model AuditLog {
   username  String   // Actor
   userRole  String   // ADMIN, MANAGER, CASHIER
   severity  String   @default("INFO") // INFO, WARNING, CRITICAL
+  deviceId  String?
   metadata  String?  // JSON string
   createdAt DateTime @default(now())
 }
+
+model Device {
+  id             String          @id @default(uuid())
+  deviceId       String          @unique
+  storeId        String          @default("sml_accra_main")
+  deviceName     String
+  deviceType     String          // DESKTOP, TABLET, MOBILE, WEB
+  appVersion     String?         @default("1.0.0")
+  ipAddress      String?
+  lastSeen       DateTime        @default(now())
+  status         String          @default("ACTIVE") // ACTIVE, REVOKED, OFFLINE
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  sales          Sale[]
+  purchases      Purchase[]
+  stockMovements StockMovement[]
+}
+
+model StockMovement {
+  id            String    @id @default(uuid())
+  storeId       String    @default("sml_accra_main")
+  productId     String
+  medicine      Medicine  @relation(fields: [productId], references: [id])
+  batchId       String?
+  batch         Batch?    @relation(fields: [batchId], references: [id])
+  quantityDelta Int       // positive = addition, negative = deduction
+  movementType  String    // PURCHASE, SALE, RETURN, ADJUSTMENT_IN, ADJUSTMENT_OUT, DAMAGE, EXPIRED, TRANSFER_IN, TRANSFER_OUT
+  referenceType String    // SALE, PURCHASE, ADJUSTMENT, INITIAL, MANUAL
+  referenceId   String?
+  unitCost      Float?
+  unitPrice     Float?
+  userId        String?
+  deviceId      String?
+  device        Device?   @relation(fields: [deviceId], references: [deviceId])
+  notes         String?
+  createdAt     DateTime  @default(now())
+
+  @@index([productId])
+  @@index([batchId])
+  @@index([movementType])
+  @@index([createdAt])
+}
+
+model SyncOutbox {
+  id             String    @id @default(uuid())
+  eventId        String    @unique @default(uuid())
+  storeId        String    @default("sml_accra_main")
+  entity         String    // SALE, PRODUCT, BATCH, PURCHASE, STOCK_MOVEMENT, AUDIT_LOG, CUSTOMER, SUPPLIER
+  action         String    // INSERT, UPDATE, DELETE
+  recordId       String
+  payload        String    // JSON string
+  entityType     String?   // Alias for entity
+  entityId       String?   // Alias for recordId
+  operation      String?   // Alias for action
+  aggregateType  String?
+  aggregateId    String?
+  status         String    @default("PENDING") // PENDING, PROCESSING, SYNCED, FAILED, DEAD_LETTER
+  attempts       Int       @default(0)
+  retryCount     Int       @default(0)
+  lastAttempt    DateTime?
+  lastAttemptAt  DateTime?
+  nextAttemptAt  DateTime?
+  errorMessage   String?
+  lastError      String?
+  deviceId       String?
+  createdAt      DateTime  @default(now())
+  syncedAt       DateTime?
+  processedAt    DateTime?
+
+  @@index([status])
+  @@index([createdAt])
+  @@index([nextAttemptAt])
+  @@index([entity])
+}
+
+model SyncInbox {
+  id         String    @id @default(uuid())
+  eventId    String    @unique
+  storeId    String    @default("sml_accra_main")
+  entityType String
+  entityId   String
+  operation  String
+  payload    String    // JSON string
+  receivedAt DateTime  @default(now())
+  appliedAt  DateTime?
+  status     String    @default("PENDING") // PENDING, APPLIED, FAILED, SKIPPED
+  error      String?
+
+  @@index([status])
+  @@index([receivedAt])
+}
+
+model SyncCursor {
+  key         String   @id
+  cursorValue String
+  updatedAt   DateTime @updatedAt
+}
+
+model SyncSession {
+  id              String    @id @default(uuid())
+  deviceId        String?
+  startedAt       DateTime  @default(now())
+  completedAt     DateTime?
+  status          String    @default("SUCCESS") // SUCCESS, PARTIAL, FAILED, OFFLINE
+  eventsAttempted Int       @default(0)
+  eventsSucceeded Int       @default(0)
+  eventsFailed    Int       @default(0)
+  durationMs      Int?
+  latencyMs       Int?
+  errorSummary    String?
+  details         String?
+
+  @@index([startedAt])
+}
+
 

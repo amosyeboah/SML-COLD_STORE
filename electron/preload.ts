@@ -44,6 +44,7 @@ export const api = {
   // Sales (POS)
   createSale: (data: any) => ipcRenderer.invoke('sales:create', data),
   getSales: () => ipcRenderer.invoke('sales:getAll'),
+  refundSale: (id: string) => ipcRenderer.invoke('sales:refund', id),
 
   // Prescriptions
   getPrescriptions: () => ipcRenderer.invoke('prescriptions:getAll'),
@@ -72,6 +73,7 @@ export const api = {
   // Printing & Hardware
   printReceipt: (html: string) => ipcRenderer.invoke('print:receipt', html),
   getPrinters: () => ipcRenderer.invoke('system:getPrinters'),
+  openCashDrawer: () => ipcRenderer.invoke('cash-drawer:open'),
 
   // Settings
   getSettings: () => ipcRenderer.invoke('settings:get'),
@@ -85,6 +87,13 @@ export const api = {
 
   // Full State Synchronization
   getFullSyncState: () => ipcRenderer.invoke('sync:getFullState'),
+  getSyncStatus: () => ipcRenderer.invoke('sync:getStatus'),
+  flushSyncOutbox: (batchSize?: number) => ipcRenderer.invoke('sync:flush', batchSize),
+  pullSyncChanges: (limit?: number) => ipcRenderer.invoke('sync:pull', limit),
+  getReconciliationReport: () => ipcRenderer.invoke('sync:reconcile'),
+  getSyncOutbox: (status?: string, limit?: number) => ipcRenderer.invoke('sync:getOutbox', status, limit),
+  getSyncSessions: (limit?: number) => ipcRenderer.invoke('sync:getSessions', limit),
+  retryDeadLetterEvents: () => ipcRenderer.invoke('sync:retryDeadLetter'),
   reconcileCloudProducts: (cloudProducts: any[]) => ipcRenderer.invoke('sync:reconcileCloudProducts', cloudProducts),
   reconcileCloudBatches: (cloudBatches: any[]) => ipcRenderer.invoke('sync:reconcileCloudBatches', cloudBatches),
 
