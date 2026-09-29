@@ -331,8 +331,10 @@ describe('Authoritative Local Depot Hub & Transaction Engine', () => {
     const finalBatch = await prisma.batch.findUnique({ where: { id: limitedBatch.id } })
     expect(finalBatch!.quantity).toBe(0)
 
-    // Cleanup limited batch
+    // Cleanup limited batch and sales
+    await prisma.salePayment.deleteMany({ where: { sale: { deviceId: { in: ['pos-1', 'pos-2', 'pos-3'] } } } })
     await prisma.saleItem.deleteMany({ where: { batchId: limitedBatch.id } })
+    await prisma.sale.deleteMany({ where: { deviceId: { in: ['pos-1', 'pos-2', 'pos-3'] } } })
     await prisma.stockMovement.deleteMany({ where: { batchId: limitedBatch.id } })
     await prisma.batch.delete({ where: { id: limitedBatch.id } })
   })
@@ -360,5 +362,18 @@ describe('Authoritative Local Depot Hub & Transaction Engine', () => {
     // Verify device was touched/recorded
     const device = await prisma.device.findUnique({ where: { deviceId: 'android-tablet-depot-01' } })
     expect(device).toBeDefined()
+  })
+
+  afterAll(async () => {
+    try {
+      await prisma.salePayment.deleteMany({ where: { sale: { deviceId: 'android-tablet-depot-01' } } })
+      await prisma.saleItem.deleteMany({ where: { batchId: testBatchId } })
+      await prisma.sale.deleteMany({ where: { deviceId: 'android-tablet-depot-01' } })
+      await prisma.stockMovement.deleteMany({ where: { batchId: testBatchId } })
+      await prisma.batch.delete({ where: { id: testBatchId } })
+      await prisma.medicine.delete({ where: { id: testProductId } })
+      await prisma.device.deleteMany({ where: { deviceId: 'android-tablet-depot-01' } })
+      await fastifyApp.close()
+    } catch {}
   })
 })

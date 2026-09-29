@@ -110,6 +110,7 @@ export async function fetchCloudSalesIfAvailable(): Promise<any[]> {
 
     const mappedSales = cloudSales.map((s: any) => {
       const relatedItems = cloudItems.filter((i: any) => i.sale_id === s.id)
+      const existingLocal = localSales.find((ls) => ls.id === s.id)
       const pm = (s.payment_method || 'CASH').toUpperCase()
       const totalAmt = Number(s.total) || 0
 
@@ -134,6 +135,27 @@ export async function fetchCloudSalesIfAvailable(): Promise<any[]> {
         payments = [{ method: 'CASH', amount: totalAmt }]
       }
 
+      let finalItems = relatedItems.map((item: any) => ({
+        id: item.id,
+        batchId: item.product_id,
+        medicineId: item.product_id,
+        quantity: Number(item.quantity) || 1,
+        price: Number(item.unit_price) || 0,
+        cost: Number(item.unit_cost) || 0,
+        name: item.product_name,
+        medicine: {
+          id: item.product_id,
+          name: item.product_name,
+          sku: item.sku,
+          price: Number(item.unit_price) || 0,
+          cost: Number(item.unit_cost) || 0,
+        },
+      }))
+
+      if (finalItems.length === 0 && existingLocal?.items && existingLocal.items.length > 0) {
+        finalItems = existingLocal.items
+      }
+
       return {
         id: s.id,
         saleNumber: s.sale_number || `INV-${String(s.id).slice(0, 8).toUpperCase()}`,
@@ -144,34 +166,19 @@ export async function fetchCloudSalesIfAvailable(): Promise<any[]> {
         total: totalAmt,
         date: s.date || s.created_at,
         cashier: s.cashier_username || 'cashier',
-        items: relatedItems.map((item: any) => ({
-          id: item.id,
-          batchId: item.product_id,
-          medicineId: item.product_id,
-          quantity: Number(item.quantity) || 1,
-          price: Number(item.unit_price) || 0,
-          cost: Number(item.unit_cost) || 0,
-          name: item.product_name,
-          medicine: {
-            id: item.product_id,
-            name: item.product_name,
-            sku: item.sku,
-            price: Number(item.unit_price) || 0,
-            cost: Number(item.unit_cost) || 0,
-          },
-        })),
+        items: finalItems,
       }
-    })
+    }).filter((s) => s.items && s.items.length > 0)
 
     const cloudIds = new Set(mappedSales.map((s) => s.id))
-    const localOnly = localSales.filter((s) => !cloudIds.has(s.id))
+    const localOnly = localSales.filter((s) => !cloudIds.has(s.id) && s.items && s.items.length > 0)
     const merged = [...mappedSales, ...localOnly]
 
     setItem(STORAGE_KEYS.SALES, merged)
     return merged
   } catch (err) {
     console.warn('Failed to fetch cloud sales in mobileStorage:', err)
-    return localSales
+    return localSales.filter((s) => s.items && s.items.length > 0)
   }
 }
 
@@ -1275,19 +1282,21 @@ export const mobileApi = {
       cashier: 'cashier',
       items: data.items.map(item => {
         const batch = batches.find(b => b.id === item.batchId)
-        const med = medicines.find(m => m.id === batch?.medicineId)
+        const med = medicines.find(m => m.id === (batch?.medicineId || item.medicineId)) || item.medicine
+        const resolvedName = item.name || med?.name || 'Cold Store Item'
         return {
           id: generateId(),
           saleId,
           batchId: item.batchId,
-          medicineId: med?.id || batch?.medicineId || item.batchId,
-          name: med?.name || 'Cold Store Item',
+          medicineId: med?.id || batch?.medicineId || item.medicineId || item.batchId,
+          name: resolvedName,
+          product_name: resolvedName,
           quantity: item.quantity,
           price: item.price,
           cost: med?.cost || 0,
           medicine: med || {
             id: item.batchId,
-            name: 'Cold Store Item',
+            name: resolvedName,
             price: item.price,
             cost: 0
           }

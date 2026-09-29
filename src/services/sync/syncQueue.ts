@@ -252,7 +252,13 @@ export async function flushSyncQueue(): Promise<{
               return {
                 sale_id: sale.id,
                 product_id: i.batch?.medicineId || i.medicineId || i.productId || null,
-                product_name: i.batch?.medicine?.name || i.name || 'Cold Store Item',
+                product_name:
+                  i.batch?.medicine?.name ||
+                  i.medicine?.name ||
+                  i.product_name ||
+                  i.productName ||
+                  i.name ||
+                  'Cold Store Item',
                 sku: i.batch?.medicine?.sku || i.sku || null,
                 quantity: qty,
                 unit_price: unitPrice,
@@ -550,9 +556,15 @@ export async function reconcileAllSalesWithCloud(): Promise<{
             const cloudItems = sale.items.map((i: any) => ({
               id: i.id,
               sale_id: sale.id,
-              product_id: i.batch?.medicineId || i.batchId || null,
-              product_name: i.batch?.medicine?.name || 'Cold Store Item',
-              sku: i.batch?.medicine?.sku || null,
+              product_id: i.batch?.medicineId || i.medicineId || i.batchId || null,
+              product_name:
+                i.batch?.medicine?.name ||
+                i.medicine?.name ||
+                i.product_name ||
+                i.productName ||
+                i.name ||
+                'Cold Store Item',
+              sku: i.batch?.medicine?.sku || i.sku || null,
               quantity: Number(i.quantity) || 1,
               unit_price: Number(i.price ?? i.batch?.medicine?.price ?? 0),
               unit_cost: Number(i.batch?.medicine?.cost ?? 0),

@@ -1223,13 +1223,24 @@ export default function POS() {
       }
     }
 
-    const items = cart.flatMap((c) =>
-      c.allocations.map((a) => ({
-        batchId: a.batchId,
-        quantity: a.quantity,
+    const items = cart.flatMap((c) => {
+      if (c.allocations && c.allocations.length > 0) {
+        return c.allocations.map((a) => ({
+          batchId: a.batchId,
+          medicineId: c.medicine.id,
+          name: c.medicine.name,
+          quantity: a.quantity,
+          price: c.medicine.price,
+        }))
+      }
+      return [{
+        batchId: c.medicine.id,
+        medicineId: c.medicine.id,
+        name: c.medicine.name,
+        quantity: c.quantity,
         price: c.medicine.price,
-      }))
-    )
+      }]
+    })
 
     const activePayments = paymentMethod === 'SPLIT'
       ? splitPayments.filter((p) => p.amount > 0).map((p) => ({

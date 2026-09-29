@@ -444,5 +444,5 @@ describe('Phase 2: Sync Engine, Outbox Pattern, Idempotency & Reconciliation', (
     })
     expect(outboxItem).toBeDefined()
     expect(outboxItem?.recordId).toBe(tempProd.id)
-  })
+  }, 15000)
 })

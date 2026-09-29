@@ -129,6 +129,43 @@ export default function SalesHistory() {
     queryFn: () => apiClient.getSales(),
   })
 
+  const { data: medicines = [] } = useQuery<any[]>({
+    queryKey: ['medicines'],
+    queryFn: () => apiClient.getMedicines(),
+  })
+
+  const resolveItemName = (item: any) => {
+    // 1. Direct relations and properties
+    const direct =
+      item?.batch?.medicine?.name ||
+      item?.medicine?.name ||
+      item?.product_name ||
+      item?.productName ||
+      item?.name
+
+    if (direct && direct !== 'Cold Store Item' && direct !== 'Unknown Item') {
+      return direct
+    }
+
+    // 2. Lookup in medicines catalogue by product/medicine/batch ID
+    const medId = item?.medicineId || item?.medicine_id || item?.productId || item?.product_id || item?.batchId
+    if (medId && Array.isArray(medicines)) {
+      const match = medicines.find((m: any) => m.id === medId || m.sku === item?.sku)
+      if (match?.name) return match.name
+    }
+
+    // 3. Lookup in medicines catalogue by unit price if unique
+    const price = Number(item?.price ?? item?.unit_price ?? item?.medicine?.price ?? 0)
+    if (price > 0 && Array.isArray(medicines)) {
+      const priceMatches = medicines.filter((m: any) => Math.abs(Number(m.price) - price) < 0.01)
+      if (priceMatches.length === 1) {
+        return priceMatches[0].name
+      }
+    }
+
+    return direct || 'Cold Store Item'
+  }
+
   const refundMutation = useMutation({
     mutationFn: async (id: string) => {
       if (typeof window !== 'undefined' && (window as any).api?.refundSale) {
@@ -513,20 +550,28 @@ export default function SalesHistory() {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {selectedSale.items?.map((item: any, i: number) => (
-                        <TableRow key={i}>
-                              <TableCell className="font-medium text-slate-800">
-                                {item.medicine?.name || item.product_name || item.name || 'Unknown Item'}
-                              </TableCell>
-                              <TableCell className="text-center text-slate-600">{item.quantity}</TableCell>
-                              <TableCell className="text-right text-slate-600">
-                                ₵{Number(item.price ?? item.unit_price ?? item.medicine?.price ?? 0).toFixed(2)}
-                              </TableCell>
-                              <TableCell className="text-right font-semibold text-slate-800">
-                                ₵{(Number(item.subtotal ?? ((item.price ?? item.unit_price ?? item.medicine?.price ?? 0) * (item.quantity || 0)))).toFixed(2)}
-                              </TableCell>
+                      {selectedSale.items && selectedSale.items.length > 0 ? (
+                        selectedSale.items.map((item: any, i: number) => (
+                          <TableRow key={i}>
+                            <TableCell className="font-medium text-slate-800">
+                              {resolveItemName(item)}
+                            </TableCell>
+                            <TableCell className="text-center text-slate-600">{item.quantity || 1}</TableCell>
+                            <TableCell className="text-right text-slate-600">
+                              ₵{Number(item.price ?? item.unit_price ?? item.medicine?.price ?? 0).toFixed(2)}
+                            </TableCell>
+                            <TableCell className="text-right font-semibold text-slate-800">
+                              ₵{(Number(item.subtotal ?? ((item.price ?? item.unit_price ?? item.medicine?.price ?? 0) * (item.quantity || 1)))).toFixed(2)}
+                            </TableCell>
+                          </TableRow>
+                        ))
+                      ) : (
+                        <TableRow>
+                          <TableCell colSpan={4} className="py-6 text-center text-slate-500">
+                            No item breakdown recorded for this transaction.
+                          </TableCell>
                         </TableRow>
-                      ))}
+                      )}
                     </TableBody>
                   </Table>
                 </div>
