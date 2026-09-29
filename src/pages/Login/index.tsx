@@ -11,7 +11,6 @@ import { Label } from '@/components/ui/label'
 import { cn } from '@/utils'
 
 import { api } from '@/services/api'
-import { getHubBaseUrl, setHubBaseUrl, isCloudHosting } from '@/services/api/hubClient'
 
 const schema = z.object({
   username: z.string().min(1, 'Username is required'),
@@ -31,50 +30,13 @@ export default function LoginPage() {
   const [error, setError] = useState<string | null>(null)
   const [loginMode, setLoginMode] = useState<'credentials' | 'pin'>('credentials')
 
-  // Depot Hub / Cloud Connection State
-  const [hubUrl, setHubUrlState] = useState(getHubBaseUrl())
-  const [isCloud, setIsCloudState] = useState(isCloudHosting())
-  const [showHubSettings, setShowHubSettings] = useState(false)
-  const [customHubInput, setCustomHubInput] = useState('')
-
   useEffect(() => {
-    if (typeof localStorage !== 'undefined') {
-      const saved = localStorage.getItem('sml_depot_hub_url')
-      if (saved && (saved.includes('vercel.app') || saved.includes(':4820'))) {
-        try {
-          localStorage.removeItem('sml_depot_hub_url')
-        } catch {}
-      }
-    }
-    setHubUrlState(getHubBaseUrl())
-    setIsCloudState(isCloudHosting())
-  }, [])
-
-  const handleSaveHubUrl = (newUrl: string) => {
-    setHubBaseUrl(newUrl)
-    setHubUrlState(getHubBaseUrl())
-    setIsCloudState(isCloudHosting())
-    setShowHubSettings(false)
-    setError(null)
-    setPinError(null)
-  }
-
-  const handleUseCloudMode = () => {
-    setHubBaseUrl('')
     if (typeof localStorage !== 'undefined') {
       try {
         localStorage.removeItem('sml_depot_hub_url')
       } catch {}
     }
-    setHubUrlState(getHubBaseUrl())
-    setIsCloudState(true)
-    setShowHubSettings(false)
-    setError(null)
-    setPinError(null)
-    if (typeof window !== 'undefined') {
-      window.location.reload()
-    }
-  }
+  }, [])
 
   // PIN Touch Numpad State
   const [pin, setPin] = useState('')
@@ -212,7 +174,7 @@ export default function LoginPage() {
     <div className="flex h-[100dvh] w-full bg-[#f3f5f9] font-sans overflow-hidden">
       {/* Left Column */}
       <div className="hidden lg:flex flex-col justify-between w-[55%] max-w-[800px] bg-gradient-to-br from-[#2563EB] to-[#0284C7] p-8 lg:p-12 rounded-r-[2rem] text-white shadow-xl z-10">
-        
+
         <div className="flex flex-col gap-6 lg:gap-8 max-w-[500px] flex-1 justify-center">
           {/* Logo & Branding */}
           <div className="flex items-center gap-4">
@@ -343,19 +305,8 @@ export default function LoginPage() {
                   </div>
 
                   {error && (
-                    <div className="rounded-lg bg-red-50 p-3 text-[13px] text-red-600 border border-red-100 text-center">
+                    <div className="rounded-lg bg-red-50 p-3 text-[13px] text-red-600 border border-red-100 text-center font-medium">
                       <p>{error}</p>
-                      {error.includes('Cannot connect to Local Depot Hub') && (
-                        <div className="mt-2.5 flex items-center justify-center gap-2">
-                          <button
-                            type="button"
-                            onClick={handleUseCloudMode}
-                            className="rounded-md bg-blue-600 px-3 py-1 text-xs font-semibold text-white hover:bg-blue-700 transition"
-                          >
-                            Switch to Cloud Mode
-                          </button>
-                        </div>
-                      )}
                     </div>
                   )}
 
@@ -529,7 +480,7 @@ export default function LoginPage() {
 
         {/* Footer Text */}
         <div className="pb-4 w-full text-center text-[11px] text-gray-500">
-          © 2024 SML Legacy Limited. All rights reserved.
+          © 2026 SML Legacy Limited. All rights reserved.
         </div>
       </div>
     </div>

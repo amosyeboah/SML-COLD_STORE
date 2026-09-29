@@ -1,26 +1,27 @@
-import { hubClient, isCloudHosting } from './hubClient'
 import { mobileApi } from './mobileStorage'
 
 /**
- * Unified Resilient API Client for SML Legacy Cold Store App.
+ * Unified API Client for SML Legacy Cold Store App.
  *
  * Architecture:
- * 1. In Electron Desktop App: uses Electron IPC (`window.api`), which directly delegates
- *    to the authoritative transactional SQLite database and Local Hub engine.
- * 2. On Android Tablets / LAN Browsers: uses `hubClient` which connects directly to the
- *    Local Depot Hub REST API over LAN/Wi-Fi (`http://<depot-hub-ip>:4821/api/...`).
- * 3. On Vercel / Cloud Web / Hub Offline: automatically routes to `mobileApi`, which
- *    connects directly to Supabase Cloud, ensuring 100% login and system availability
- *    with zero network mixed-content errors.
+ * 1. Physical Store Tablet / Web / Vercel:
+ *    Uses `mobileApi`. It provides offline-first transactional storage on the tablet
+ *    (via IndexedDB / localStorage) and automatically reflects/syncs all transactions
+ *    to Supabase Cloud whenever internet is available.
+ * 2. Remote Access (Vercel at https://sml-cold-store.vercel.app):
+ *    Admin / Owner opens the dashboard from anywhere. It reads the live reflected state
+ *    from Supabase Cloud, giving 100% visibility into what is happening in the store.
+ * 3. Electron Desktop App (if running on a Windows PC):
+ *    Uses Electron IPC (`window.api`) with direct fallback to `mobileApi`.
  */
 export function getApi() {
   if (typeof window !== 'undefined' && window.api) {
     const electronApi = window.api as any
-    
-    // Create a wrapper object that includes both Electron IPC and custom methods
+
+    // Create a wrapper object that includes both Electron IPC and mobileApi methods
     const wrappedApi = {
       ...electronApi,
-      
+
       refundSale: async (id: string, username?: string, userRole?: string) => {
         if ((window as any).electron?.ipcRenderer?.invoke) {
           try {
@@ -29,40 +30,40 @@ export function getApi() {
             // fallback
           }
         }
-        return await (hubClient as any).refundSale(id, username, userRole)
+        return await mobileApi.refundSale(id)
       },
-      
+
       // Bluetooth printer methods
-      connectBluetoothPrinter: () => hubClient.connectBluetoothPrinter(),
-      disconnectBluetoothPrinter: () => hubClient.disconnectBluetoothPrinter(),
-      getBluetoothPrinterStatus: () => hubClient.getBluetoothPrinterStatus(),
-      testBluetoothPrinter: () => hubClient.testBluetoothPrinter(),
-      setBluetoothPaperWidth: (w: any) => hubClient.setBluetoothPaperWidth(w),
-      
+      connectBluetoothPrinter: () => mobileApi.connectBluetoothPrinter(),
+      disconnectBluetoothPrinter: () => mobileApi.disconnectBluetoothPrinter(),
+      getBluetoothPrinterStatus: () => mobileApi.getBluetoothPrinterStatus(),
+      testBluetoothPrinter: () => mobileApi.testBluetoothPrinter(),
+      setBluetoothPaperWidth: (w: any) => mobileApi.setBluetoothPaperWidth(w),
+
       // Enhanced printReceipt with Bluetooth printer priority
       printReceipt: async (html: string) => {
-        const btStatus = hubClient.getBluetoothPrinterStatus()
+        const btStatus = mobileApi.getBluetoothPrinterStatus()
         if (btStatus.isConnected) {
-          const btRes = await hubClient.printReceipt(html)
+          const btRes = await mobileApi.printReceipt(html)
           if (btRes.success) return btRes
         }
         if (typeof electronApi.printReceipt === 'function') {
           return await electronApi.printReceipt(html)
         }
-        return await hubClient.printReceipt(html)
+        return await mobileApi.printReceipt(html)
       },
 
       // Enhanced openCashDrawer with Bluetooth printer priority
       openCashDrawer: async () => {
-        const btStatus = hubClient.getBluetoothPrinterStatus()
+        const btStatus = mobileApi.getBluetoothPrinterStatus()
         if (btStatus.isConnected) {
-          const btRes = await hubClient.openCashDrawer()
+          const btRes = await mobileApi.openCashDrawer()
           if (btRes.success) return btRes
         }
         if (typeof electronApi.openCashDrawer === 'function') {
           return await electronApi.openCashDrawer()
         }
-        return await hubClient.openCashDrawer()
+        return await mobileApi.openCashDrawer()
       },
 
       // Enhanced getPrinters including Bluetooth printer
@@ -75,7 +76,7 @@ export function getApi() {
             list = []
           }
         }
-        const btStatus = hubClient.getBluetoothPrinterStatus()
+        const btStatus = mobileApi.getBluetoothPrinterStatus()
         if (btStatus.isConnected && btStatus.deviceName) {
           list = [{ name: `Bluetooth: ${btStatus.deviceName}`, displayName: `Bluetooth: ${btStatus.deviceName}`, isDefault: true }, ...list]
         }
@@ -83,7 +84,6 @@ export function getApi() {
       }
     }
 
-    // Keep window.api updated with wrapped handlers
     try {
       window.api = wrappedApi
     } catch {
@@ -93,50 +93,9 @@ export function getApi() {
     return wrappedApi
   }
 
-  // Running on Web, Android Tablet browser, or Vercel
-  // If hosted on Vercel or cloud web with no custom depot hub URL, use mobileApi directly
-  if (isCloudHosting()) {
-    return mobileApi as any
-  }
-
-  // When on LAN or with custom hub URL, wrap hubClient with automatic fallback to mobileApi
-  const resilientApi = new Proxy(hubClient as any, {
-    get(target, prop: string) {
-      const hubMethod = (target as any)[prop]
-      const mobileMethod = (mobileApi as any)[prop]
-
-      if (typeof hubMethod === 'function') {
-        return async (...args: any[]) => {
-          try {
-            return await hubMethod.apply(target, args)
-          } catch (err: any) {
-            const isConnectionError =
-              err?.message?.includes('Cannot connect to Local Depot Hub') ||
-              err?.message?.includes('Failed to fetch') ||
-              err?.message?.includes('NetworkError') ||
-              err?.name === 'TypeError'
-            if (isConnectionError && typeof mobileMethod === 'function') {
-              console.warn(`Local Depot Hub unreachable for ${prop}. Falling back to Standalone Cloud API.`)
-              return await mobileMethod.apply(mobileApi, args)
-            }
-            throw err
-          }
-        }
-      }
-
-      return mobileMethod || hubMethod
-    }
-  })
-
-  return resilientApi
+  // Tablet in the store, mobile devices, and Remote Vercel Web:
+  // Directly use mobileApi (offline-first local storage + Supabase Cloud synchronization)
+  return mobileApi as any
 }
 
 export const api = getApi()
-
-// Register this client device with the Local Depot Hub only when on local network
-if (typeof window !== 'undefined' && !isCloudHosting()) {
-  setTimeout(() => {
-    hubClient.registerDeviceWithHub().catch(() => {})
-  }, 1000)
-}
-
