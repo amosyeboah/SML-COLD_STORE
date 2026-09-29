@@ -134,6 +134,13 @@ export default function SalesHistory() {
     queryFn: () => apiClient.getMedicines(),
   })
 
+  const { data: storedSettings = {} } = useQuery<Record<string, string>>({
+    queryKey: ['settings'],
+    queryFn: () => apiClient.getSettings(),
+  })
+
+  const enableRefund = storedSettings['pos.enableRefund'] !== 'false'
+
   const resolveItemName = (item: any) => {
     // 1. Direct relations and properties
     const direct =
@@ -241,7 +248,7 @@ export default function SalesHistory() {
 
   return (
     <div className="h-full overflow-y-auto p-6 space-y-6 font-sans bg-slate-50">
-      <div className="relative overflow-hidden rounded-2xl border border-indigo-200 p-6 text-white shadow-lg shadow-indigo-500/10" style={{ backgroundColor: '#4f46e5' }}>
+      <div className="relative overflow-hidden rounded-2xl border border-blue-200 p-6 text-white shadow-lg shadow-blue-500/10" style={{ backgroundColor: '#2563eb' }}>
         <div className="absolute -right-10 -top-10 h-32 w-32 rounded-full bg-cyan-300/20 blur-2xl" />
         <div className="absolute -bottom-12 left-10 h-28 w-28 rounded-full bg-violet-300/20 blur-2xl" />
         <div className="absolute right-14 top-10 h-20 w-20 rounded-full border border-white/20 bg-white/5" />
@@ -254,11 +261,11 @@ export default function SalesHistory() {
               </span>
             </div>
             <h2 className="text-2xl font-bold">Sales History</h2>
-            <p className="max-w-2xl text-sm text-indigo-50/90">View all past transactions, search by invoice or customer.</p>
+            <p className="max-w-2xl text-sm text-blue-50/90">View all past transactions, search by invoice or customer.</p>
           </div>
           <div className={`grid grid-cols-2 ${otherRevenue > 0 ? 'lg:grid-cols-5' : 'lg:grid-cols-4'} gap-4`}>
             <div className="rounded-xl border border-white/10 bg-gradient-to-br from-white/20 to-white/5 px-4 py-3 backdrop-blur shadow-sm">
-              <p className="text-[11px] uppercase tracking-[0.2em] text-indigo-100 font-medium">Transactions</p>
+              <p className="text-[11px] uppercase tracking-[0.2em] text-sky-100 font-medium">Transactions</p>
               <p className="text-2xl font-bold text-white mt-1">{filteredSales.length}</p>
             </div>
             <div className="rounded-xl border border-emerald-400/20 bg-gradient-to-br from-emerald-500/30 to-emerald-400/10 px-4 py-3 backdrop-blur shadow-sm">
@@ -620,18 +627,24 @@ export default function SalesHistory() {
                 </div>
               </div>
 
-              <DialogFooter className="border-t pt-4 sm:justify-between">
-                <Button 
-                  variant="destructive" 
-                  onClick={() => {
-                    if (confirm('Are you sure you want to refund this transaction? This will return items to stock and delete the transaction.')) {
-                      refundMutation.mutate(selectedSale.id)
-                    }
-                  }}
-                  disabled={refundMutation.isPending}
-                >
-                  {refundMutation.isPending ? 'Refunding...' : 'Refund Transaction'}
-                </Button>
+              <DialogFooter className="border-t pt-4 sm:justify-between items-center gap-2">
+                {enableRefund ? (
+                  <Button 
+                    variant="destructive" 
+                    onClick={() => {
+                      if (confirm('Are you sure you want to refund this transaction? This will return items to stock and delete the transaction.')) {
+                        refundMutation.mutate(selectedSale.id)
+                      }
+                    }}
+                    disabled={refundMutation.isPending}
+                  >
+                    {refundMutation.isPending ? 'Refunding...' : 'Refund Transaction'}
+                  </Button>
+                ) : (
+                  <span className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-2.5 py-1.5 font-medium">
+                    Refunds are disabled in POS Settings
+                  </span>
+                )}
                 <Button variant="outline" onClick={() => setSelectedSale(null)}>Close</Button>
               </DialogFooter>
             </div>

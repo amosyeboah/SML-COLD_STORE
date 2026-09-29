@@ -60,6 +60,7 @@ const DEFAULTS: Record<string, string> = {
   'pos.enableDiscount': 'false',
   'pos.enableTax': 'false',
   'pos.taxRate': '0',
+  'pos.enableRefund': 'true',
   // Receipt & Invoice
   'receipt.paperSize': '58mm',
   'receipt.headerText': 'Quality Frozen Foods & Cold Storage',
@@ -97,14 +98,12 @@ function Toggle({
       id={id}
       type="button"
       onClick={() => onChange(!checked)}
-      className={`relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 focus:outline-none ${
-        checked ? 'bg-blue-600' : 'bg-slate-200'
-      }`}
+      className={`relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 focus:outline-none ${checked ? 'bg-blue-600' : 'bg-slate-200'
+        }`}
     >
       <span
-        className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
-          checked ? 'translate-x-4' : 'translate-x-0'
-        }`}
+        className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${checked ? 'translate-x-4' : 'translate-x-0'
+          }`}
       />
     </button>
   )
@@ -308,11 +307,10 @@ export default function Settings() {
               key={tab.key}
               id={`settings-tab-${tab.key}`}
               onClick={() => setActiveTab(tab.key)}
-              className={`flex items-center gap-2 rounded-t-lg px-4 py-2.5 text-xs font-semibold transition-all border-b-2 ${
-                activeTab === tab.key
-                  ? 'border-blue-600 text-blue-600 bg-blue-50/60'
-                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:bg-gray-50'
-              }`}
+              className={`flex items-center gap-2 rounded-t-lg px-4 py-2.5 text-xs font-semibold transition-all border-b-2 ${activeTab === tab.key
+                ? 'border-blue-600 text-blue-600 bg-blue-50/60'
+                : 'border-transparent text-gray-500 hover:text-gray-700 hover:bg-gray-50'
+                }`}
             >
               <tab.icon className="h-3.5 w-3.5" />
               {tab.label}
@@ -385,16 +383,9 @@ export default function Settings() {
                         className="h-9 w-full rounded-md border border-gray-200 bg-white px-3 text-sm"
                       >
                         {[
-                          ['USD', 'US Dollar (USD)'],
-                          ['EUR', 'Euro (EUR)'],
                           ['GBP', 'British Pound (GBP)'],
                           ['GHS', 'Ghanaian Cedi (GHS)'],
                           ['NGN', 'Nigerian Naira (NGN)'],
-                          ['KES', 'Kenyan Shilling (KES)'],
-                          ['ZAR', 'South African Rand (ZAR)'],
-                          ['INR', 'Indian Rupee (INR)'],
-                          ['PKR', 'Pakistani Rupee (PKR)'],
-                          ['BDT', 'Bangladeshi Taka (BDT)'],
                         ].map(([code, label]) => (
                           <option key={code} value={code}>
                             {label}
@@ -456,7 +447,7 @@ export default function Settings() {
                       id="biz-city"
                       value={form['biz.city']}
                       onChange={(e) => set('biz.city', e.target.value)}
-                      placeholder="Accra, Greater Accra"
+                      placeholder="Kumasi, Ashanti Region"
                       className="h-9 text-sm"
                     />
                   </FieldRow>
@@ -549,6 +540,19 @@ export default function Settings() {
                         onChange={() => toggle('pos.enableTax')}
                       />
                     </div>
+
+                    {/* Refund setting */}
+                    <div className="flex items-center justify-between gap-4 pt-3">
+                      <div>
+                        <p className="text-sm font-medium text-gray-700">Enable Refund</p>
+                        <p className="text-xs text-gray-400">Allow staff to process transaction refunds and return items back to inventory</p>
+                      </div>
+                      <Toggle
+                        id="toggle-pos-enableRefund"
+                        checked={bool('pos.enableRefund')}
+                        onChange={() => toggle('pos.enableRefund')}
+                      />
+                    </div>
                   </div>
 
                   {bool('pos.enableTax') && (
@@ -593,11 +597,10 @@ export default function Settings() {
                           key={size}
                           id={`receipt-paper-${size}`}
                           onClick={() => set('receipt.paperSize', size)}
-                          className={`flex-1 rounded-lg border py-2 text-xs font-semibold transition-all ${
-                            form['receipt.paperSize'] === size
-                              ? 'border-blue-400 bg-blue-50 text-blue-700 shadow-sm'
-                              : 'border-gray-200 text-gray-500 hover:border-gray-300'
-                          }`}
+                          className={`flex-1 rounded-lg border py-2 text-xs font-semibold transition-all ${form['receipt.paperSize'] === size
+                            ? 'border-blue-400 bg-blue-50 text-blue-700 shadow-sm'
+                            : 'border-gray-200 text-gray-500 hover:border-gray-300'
+                            }`}
                         >
                           {size}
                         </button>
@@ -612,11 +615,10 @@ export default function Settings() {
                           key={align}
                           id={`receipt-align-${align}`}
                           onClick={() => set('receipt.alignment', align)}
-                          className={`flex-1 rounded-lg border py-2 text-xs font-semibold capitalize transition-all ${
-                            form['receipt.alignment'] === align
-                              ? 'border-blue-400 bg-blue-50 text-blue-700 shadow-sm'
-                              : 'border-gray-200 text-gray-500 hover:border-gray-300'
-                          }`}
+                          className={`flex-1 rounded-lg border py-2 text-xs font-semibold capitalize transition-all ${form['receipt.alignment'] === align
+                            ? 'border-blue-400 bg-blue-50 text-blue-700 shadow-sm'
+                            : 'border-gray-200 text-gray-500 hover:border-gray-300'
+                            }`}
                         >
                           {align}
                         </button>
@@ -836,11 +838,10 @@ export default function Settings() {
 
                   {btFeedback && (
                     <div
-                      className={`rounded-xl border p-3 text-xs font-medium flex items-center justify-between ${
-                        btFeedback.type === 'success'
-                          ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
-                          : 'border-red-200 bg-red-50 text-red-800'
-                      }`}
+                      className={`rounded-xl border p-3 text-xs font-medium flex items-center justify-between ${btFeedback.type === 'success'
+                        ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+                        : 'border-red-200 bg-red-50 text-red-800'
+                        }`}
                     >
                       <span>{btFeedback.message}</span>
                       <button
@@ -858,22 +859,20 @@ export default function Settings() {
                       <button
                         type="button"
                         onClick={() => handlePaperWidthChange('58mm')}
-                        className={`flex items-center justify-center gap-2 rounded-lg border py-2.5 text-xs font-semibold transition-all ${
-                          btStatus.paperWidth === '58mm'
-                            ? 'border-blue-600 bg-blue-50 text-blue-700 shadow-xs'
-                            : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-50'
-                        }`}
+                        className={`flex items-center justify-center gap-2 rounded-lg border py-2.5 text-xs font-semibold transition-all ${btStatus.paperWidth === '58mm'
+                          ? 'border-blue-600 bg-blue-50 text-blue-700 shadow-xs'
+                          : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-50'
+                          }`}
                       >
                         <span>58mm (2-inch Portable)</span>
                       </button>
                       <button
                         type="button"
                         onClick={() => handlePaperWidthChange('80mm')}
-                        className={`flex items-center justify-center gap-2 rounded-lg border py-2.5 text-xs font-semibold transition-all ${
-                          btStatus.paperWidth === '80mm'
-                            ? 'border-blue-600 bg-blue-50 text-blue-700 shadow-xs'
-                            : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-50'
-                        }`}
+                        className={`flex items-center justify-center gap-2 rounded-lg border py-2.5 text-xs font-semibold transition-all ${btStatus.paperWidth === '80mm'
+                          ? 'border-blue-600 bg-blue-50 text-blue-700 shadow-xs'
+                          : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-50'
+                          }`}
                       >
                         <span>80mm (3-inch Desktop)</span>
                       </button>
@@ -891,8 +890,8 @@ export default function Settings() {
                       {isConnectingBt
                         ? 'Searching & Connecting...'
                         : btStatus.isConnected
-                        ? 'Reconnect / Change Device'
-                        : 'Scan & Connect Bluetooth Printer'}
+                          ? 'Reconnect / Change Device'
+                          : 'Scan & Connect Bluetooth Printer'}
                     </Button>
 
                     {btStatus.isConnected && (

@@ -1368,6 +1368,11 @@ export const mobileApi = {
   },
 
   refundSale: async (id: string) => {
+    const settings = getItem<Record<string, string>>(STORAGE_KEYS.SETTINGS, {})
+    if (settings['pos.enableRefund'] === 'false') {
+      throw new Error('Refunds are disabled in POS settings.')
+    }
+
     const sales = getItem<any[]>(STORAGE_KEYS.SALES, [])
     const saleIndex = sales.findIndex((s: any) => s.id === id)
     if (saleIndex === -1) throw new Error('Sale not found')
@@ -1822,6 +1827,10 @@ export const mobileApi = {
     'biz.currencySymbol': 'GH₵',
     'receipt.footerText': 'Thank you for choosing SML Legacy! Keep frozen at -18°C.',
     'receipt.headerText': 'Quality Frozen Foods & Cold Storage',
+    'pos.enableDiscount': 'false',
+    'pos.enableTax': 'false',
+    'pos.taxRate': '0',
+    'pos.enableRefund': 'true',
     storeName: 'SML Legacy Limited',
     currency: 'GHS',
     address: 'Cold Store Market Depot, Accra, Ghana',

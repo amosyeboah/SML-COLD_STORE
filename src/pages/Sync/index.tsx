@@ -260,29 +260,28 @@ export default function SyncPage() {
     <div className="h-full overflow-y-auto p-4 sm:p-6 space-y-6 font-sans">
       {/* ── Top Header Banner ────────────────────────────────────────── */}
       <div
-        className="relative overflow-hidden rounded-2xl border border-blue-900/30 p-6 text-white shadow-xl"
-        style={{
-          background: 'linear-gradient(135deg, #0f172a 0%, #1e3a8a 50%, #0369a1 100%)',
-        }}
+        className="relative overflow-hidden rounded-2xl border border-blue-200 p-6 text-white shadow-lg shadow-blue-500/10"
+        style={{ backgroundColor: '#2563eb' }}
       >
-        <div className="absolute -right-10 -top-10 h-44 w-44 rounded-full bg-cyan-400/20 blur-3xl pointer-events-none" />
-        <div className="absolute -bottom-12 left-10 h-36 w-36 rounded-full bg-indigo-500/20 blur-3xl pointer-events-none" />
+        <div className="absolute -right-10 -top-10 h-44 w-44 rounded-full bg-cyan-300/20 blur-3xl pointer-events-none" />
+        <div className="absolute -bottom-12 left-10 h-36 w-36 rounded-full bg-violet-300/20 blur-3xl pointer-events-none" />
+        <div className="absolute right-14 top-10 h-20 w-20 rounded-full border border-white/20 bg-white/5 pointer-events-none" />
 
         <div className="relative flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
           <div className="space-y-3">
             <div className="flex flex-wrap items-center gap-2">
-              <span className="inline-flex items-center rounded-full border border-sky-400/30 bg-sky-950/60 px-3 py-1 text-[11px] font-semibold uppercase tracking-wider text-sky-200">
+              <span className="inline-flex items-center rounded-full border border-white/20 bg-white/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-wider text-sky-100">
                 Authoritative SQLite ↔ Supabase Sync Engine
               </span>
-              <span className="inline-flex items-center rounded-full border border-slate-500/30 bg-slate-800/80 px-2.5 py-1 text-[11px] font-mono text-slate-300">
+              <span className="inline-flex items-center rounded-full border border-white/20 bg-white/10 px-2.5 py-1 text-[11px] font-mono text-white">
                 Depot: {status.depotId}
               </span>
             </div>
             <h2 className="text-2xl sm:text-3xl font-extrabold flex items-center gap-3 tracking-tight">
-              <Cloud className="w-8 h-8 text-cyan-300 shrink-0" />
+              <Cloud className="w-8 h-8 text-cyan-200 shrink-0" />
               Depot Cloud Synchronization
             </h2>
-            <p className="text-xs sm:text-sm text-sky-100 max-w-2xl leading-relaxed">
+            <p className="text-xs sm:text-sm text-blue-50/90 max-w-2xl leading-relaxed">
               Local SQLite is the authoritative source for on-site transactions. Cloud writes are guaranteed idempotent, stock changes sync via immutable movements, and network failures retry with exponential backoff.
             </p>
           </div>
@@ -291,7 +290,7 @@ export default function SyncPage() {
             <Button
               onClick={handleFlushOutbox}
               disabled={isFlushing || isPulling}
-              className="gap-2 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold shadow-lg shadow-emerald-900/30 h-10 px-4 rounded-xl text-xs sm:text-sm"
+              className="gap-2 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold shadow-md shadow-emerald-950/20 h-10 px-4 rounded-xl text-xs sm:text-sm"
             >
               <RefreshCw className={`w-4 h-4 ${isFlushing ? 'animate-spin' : ''}`} />
               {isFlushing ? 'Flushing Outbox...' : 'Push Outbox'}
@@ -311,7 +310,7 @@ export default function SyncPage() {
               onClick={handleRunReconciliation}
               disabled={isReconciling}
               variant="outline"
-              className="gap-2 border-cyan-400/40 bg-cyan-950/40 hover:bg-cyan-900/60 text-cyan-200 font-semibold h-10 px-4 rounded-xl text-xs sm:text-sm"
+              className="gap-2 border-white/20 bg-white/10 hover:bg-white/20 text-white font-semibold h-10 px-4 rounded-xl text-xs sm:text-sm"
             >
               <FileCheck2 className={`w-4 h-4 ${isReconciling ? 'animate-spin' : ''}`} />
               {isReconciling ? 'Auditing...' : 'Reconcile'}

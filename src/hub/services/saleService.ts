@@ -291,6 +291,11 @@ export async function getSaleById(id: string) {
 }
 
 export async function refundSale(id: string, username?: string, userRole?: string) {
+  const refundSetting = await prisma.setting.findUnique({ where: { key: 'pos.enableRefund' } }).catch(() => null)
+  if (refundSetting && refundSetting.value === 'false') {
+    throw new Error('Refunds are disabled in POS settings.')
+  }
+
   const sale = await getSaleById(id)
   if (!sale) throw new Error('Sale not found')
 

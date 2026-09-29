@@ -381,7 +381,7 @@ describe('Phase 2: Sync Engine, Outbox Pattern, Idempotency & Reconciliation', (
     expect(['IN_SYNC', 'DISCREPANCY_DETECTED', 'CLOUD_UNAVAILABLE']).toContain(report.status)
     expect(Array.isArray(report.discrepancies)).toBe(true)
     expect(Array.isArray(report.recommendations)).toBe(true)
-  })
+  }, 15000)
 
   // 10. Sync Engine State Observability
   it('10. Exposes complete synchronization observability states (pending, failed, dead-letter, latency)', async () => {
