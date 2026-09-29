@@ -1,8 +1,13 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js'
-import WebSocket from 'ws'
 
 if (typeof globalThis.WebSocket === 'undefined') {
-  ;(globalThis as any).WebSocket = WebSocket
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const ws = require('ws')
+    ;(globalThis as any).WebSocket = ws.default || ws
+  } catch {
+    // WebSocket is natively available in Node 18+ and Electron
+  }
 }
 
 let supabaseInstance: SupabaseClient | null = null

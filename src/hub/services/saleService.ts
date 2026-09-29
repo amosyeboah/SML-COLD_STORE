@@ -82,7 +82,11 @@ export async function completeSale(input: CreateSaleInput) {
         : [
             {
               id: randomUUID(),
-              method: (input.paymentMethod || '').toUpperCase().includes('MOBILE') ? 'MOBILE' : 'CASH',
+              method:
+                (input.paymentMethod || '').toUpperCase().includes('MOBILE') ||
+                (input.paymentMethod || '').toUpperCase().includes('MOMO')
+                  ? 'MOBILE'
+                  : 'CASH',
               amount: Number(input.total) || 0,
             },
           ]

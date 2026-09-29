@@ -344,8 +344,7 @@ export async function flushOutboxBatch(batchSize = 50): Promise<{
         latency_ms: conn.latencyMs,
         error_summary: failed > 0 ? lastSyncError : null,
       })
-      .then(() => {})
-      .catch(() => {})
+      .then(() => {}, () => {})
 
     return {
       success: sessionStatus !== 'FAILED',
@@ -440,14 +439,46 @@ export async function pullCloudChanges(limit = 100): Promise<{
           if (p.id) {
             const localProd = await prisma.medicine.findUnique({ where: { id: p.id }, include: { batches: true } })
             if (localProd) {
-              const batchIds = localProd.batches.map((b: any) => b.id)
+              const batchIds = Array.isArray(localProd.batches) ? localProd.batches.map((b: any) => b.id) : []
+
+              const deleteErrors: string[] = []
+
               if (batchIds.length > 0) {
-                await prisma.saleItem.deleteMany({ where: { batchId: { in: batchIds } } })
-                await prisma.stockMovement.deleteMany({ where: { productId: p.id } })
-                await prisma.batch.deleteMany({ where: { medicineId: p.id } })
+                try {
+                  await prisma.saleItem.deleteMany({ where: { batchId: { in: batchIds } } })
+                } catch (err: any) {
+                  deleteErrors.push(`saleItem.deleteMany failed: ${err.message || String(err)}`)
+                }
+
+                try {
+                  await prisma.stockMovement.deleteMany({ where: { productId: p.id } })
+                } catch (err: any) {
+                  deleteErrors.push(`stockMovement.deleteMany failed: ${err.message || String(err)}`)
+                }
+
+                try {
+                  await prisma.batch.deleteMany({ where: { medicineId: p.id } })
+                } catch (err: any) {
+                  deleteErrors.push(`batch.deleteMany failed: ${err.message || String(err)}`)
+                }
               }
-              await prisma.purchaseItem.deleteMany({ where: { medicineId: p.id } })
-              await prisma.medicine.delete({ where: { id: p.id } })
+
+              try {
+                await prisma.purchaseItem.deleteMany({ where: { medicineId: p.id } })
+              } catch (err: any) {
+                deleteErrors.push(`purchaseItem.deleteMany failed: ${err.message || String(err)}`)
+              }
+
+              try {
+                await prisma.medicine.delete({ where: { id: p.id } })
+              } catch (err: any) {
+                deleteErrors.push(`medicine.delete failed: ${err.message || String(err)}`)
+              }
+
+              if (deleteErrors.length > 0) {
+                // Provide detailed failure context on the inbox item so operators can inspect later
+                throw new Error(`Partial/failed deletes for product ${p.id}: ${deleteErrors.join('; ')}`)
+              }
             }
           }
         }
@@ -480,40 +511,53 @@ export async function pullCloudChanges(limit = 100): Promise<{
   }
 }
 
-/**
- * Diagnostic & Reconciliation Report.
- * Compares local SQLite counts and totals against Supabase Cloud counts and totals.
- */
-export async function getReconciliationReport(): Promise<{
+export interface ReconciliationReport {
+  timestamp: string
+  status: 'IN_SYNC' | 'DISCREPANCY_DETECTED' | 'CLOUD_UNAVAILABLE'
   connected: boolean
   local: {
     salesCount: number
     salesTotal: number
+    salesTotalRevenue: number
     stockMovementsCount: number
     productsCount: number
     batchesCount: number
+    purchasesCount: number
+    pendingOutboxCount: number
+    deadLetterCount: number
   }
   cloud: {
     salesCount: number
     salesTotal: number
+    salesTotalRevenue: number
     stockMovementsCount: number
     productsCount: number
     batchesCount: number
-  }
+    purchasesCount: number
+  } | null
   outbox: {
     pending: number
     failed: number
     deadLetter: number
     synced: number
+    total?: number
   }
-  discrepancies: {
-    salesCountDiff: number
-    salesTotalDiff: number
-    stockMovementsDiff: number
-    missingInCloudSales: string[]
-  }
+  discrepancies: Array<{
+    metric: string
+    localValue: number
+    cloudValue: number
+    difference: number
+    description: string
+  }>
+  recommendations: string[]
   reconciliationSafe: boolean
-}> {
+}
+
+/**
+ * Diagnostic & Reconciliation Report.
+ * Compares local SQLite counts and totals against Supabase Cloud counts and totals.
+ */
+export async function getReconciliationReport(): Promise<ReconciliationReport> {
   const [
     localSalesCount,
     localSalesTotalAgg,

@@ -5,27 +5,75 @@
 import { getDeviceProfile } from './deviceIdentity'
 import { bluetoothPrinter } from '../hardware/bluetoothPrinter'
 
+export function isLocalOrLanHostname(hostname: string): boolean {
+  if (!hostname) return false
+  const h = hostname.toLowerCase()
+  if (h === 'localhost' || h === '127.0.0.1' || h === '::1' || h === '0.0.0.0') {
+    return true
+  }
+  // Private LAN IP addresses: 192.168.x.x, 10.x.x.x, 172.16-31.x.x
+  if (/^192\.168\.\d{1,3}\.\d{1,3}$/.test(h)) return true
+  if (/^10\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(h)) return true
+  if (/^172\.(1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3}$/.test(h)) return true
+  return false
+}
+
+export function isCloudHosting(): boolean {
+  if (typeof window === 'undefined' || !window.location || !window.location.hostname) return false
+  const host = window.location.hostname.toLowerCase()
+  const custom = typeof localStorage !== 'undefined' ? localStorage.getItem('sml_depot_hub_url') : null
+  if (custom && (custom.includes('vercel.app') || custom.includes(':4820'))) {
+    try {
+      localStorage.removeItem('sml_depot_hub_url')
+    } catch {}
+  }
+  if (custom && !custom.includes('vercel.app') && !custom.includes(':4820')) {
+    return false
+  }
+  return host.includes('vercel.app') || !isLocalOrLanHostname(host)
+}
+
 export function getHubBaseUrl(): string {
   if (typeof localStorage !== 'undefined') {
     const custom = localStorage.getItem('sml_depot_hub_url')
-    if (custom) return custom.replace(/\/+$/, '')
+    if (custom) {
+      const cleanCustom = custom.replace(/\/+$/, '')
+      // Discard accidental vercel.app hub entries or obsolete 4820 port
+      if (cleanCustom.includes('vercel.app') || cleanCustom.includes(':4820')) {
+        try {
+          localStorage.removeItem('sml_depot_hub_url')
+        } catch {}
+      } else {
+        return cleanCustom
+      }
+    }
   }
 
   const envUrl = (import.meta as any).env?.VITE_HUB_URL
-  if (envUrl) return envUrl.replace(/\/+$/, '')
+  if (envUrl && !envUrl.includes('vercel.app') && !envUrl.includes(':4820')) return envUrl.replace(/\/+$/, '')
 
   if (typeof window !== 'undefined' && window.location && window.location.hostname) {
     const hostname = window.location.hostname
-    // If running in development Vite, hub is usually on 4820 on the same host
-    return `http://${hostname}:4820`
+    // Only infer hub on local dev machine or LAN IP
+    if (isLocalOrLanHostname(hostname)) {
+      return `http://${hostname}:4821`
+    }
   }
 
-  return 'http://localhost:4820'
+  return 'http://localhost:4821'
 }
 
 export function setHubBaseUrl(url: string) {
   if (typeof localStorage !== 'undefined') {
-    localStorage.setItem('sml_depot_hub_url', url.replace(/\/+$/, ''))
+    if (!url || url.trim() === '' || url.includes('vercel.app') || url.includes(':4820')) {
+      try {
+        localStorage.removeItem('sml_depot_hub_url')
+      } catch {}
+    } else {
+      try {
+        localStorage.setItem('sml_depot_hub_url', url.replace(/\/+$/, ''))
+      } catch {}
+    }
   }
 }
 
@@ -360,9 +408,9 @@ export const hubClient = {
   openCashDrawer: async () => {
     // If Bluetooth printer is connected, trigger ESC/POS pulse
     if (bluetoothPrinter.getStatus().isConnected) {
-      // ESC p 0 25 250 (pulse cash drawer kick)
-      await bluetoothPrinter.sendRawBytes(new Uint8Array([0x1b, 0x70, 0x00, 0x19, 0xfa]))
-      return { success: true }
+      const res = await bluetoothPrinter.openCashDrawer()
+      if (res.success) return { success: true }
+      return { success: false, reason: res.error || 'Failed to trigger drawer on Bluetooth printer' }
     }
     return { success: false, reason: 'Cash drawer not available via hub' }
   },

@@ -11,6 +11,7 @@ import { Label } from '@/components/ui/label'
 import { cn } from '@/utils'
 
 import { api } from '@/services/api'
+import { getHubBaseUrl, setHubBaseUrl, isCloudHosting } from '@/services/api/hubClient'
 
 const schema = z.object({
   username: z.string().min(1, 'Username is required'),
@@ -29,6 +30,51 @@ export default function LoginPage() {
   const [showPassword, setShowPassword] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [loginMode, setLoginMode] = useState<'credentials' | 'pin'>('credentials')
+
+  // Depot Hub / Cloud Connection State
+  const [hubUrl, setHubUrlState] = useState(getHubBaseUrl())
+  const [isCloud, setIsCloudState] = useState(isCloudHosting())
+  const [showHubSettings, setShowHubSettings] = useState(false)
+  const [customHubInput, setCustomHubInput] = useState('')
+
+  useEffect(() => {
+    if (typeof localStorage !== 'undefined') {
+      const saved = localStorage.getItem('sml_depot_hub_url')
+      if (saved && (saved.includes('vercel.app') || saved.includes(':4820'))) {
+        try {
+          localStorage.removeItem('sml_depot_hub_url')
+        } catch {}
+      }
+    }
+    setHubUrlState(getHubBaseUrl())
+    setIsCloudState(isCloudHosting())
+  }, [])
+
+  const handleSaveHubUrl = (newUrl: string) => {
+    setHubBaseUrl(newUrl)
+    setHubUrlState(getHubBaseUrl())
+    setIsCloudState(isCloudHosting())
+    setShowHubSettings(false)
+    setError(null)
+    setPinError(null)
+  }
+
+  const handleUseCloudMode = () => {
+    setHubBaseUrl('')
+    if (typeof localStorage !== 'undefined') {
+      try {
+        localStorage.removeItem('sml_depot_hub_url')
+      } catch {}
+    }
+    setHubUrlState(getHubBaseUrl())
+    setIsCloudState(true)
+    setShowHubSettings(false)
+    setError(null)
+    setPinError(null)
+    if (typeof window !== 'undefined') {
+      window.location.reload()
+    }
+  }
 
   // PIN Touch Numpad State
   const [pin, setPin] = useState('')
@@ -298,7 +344,18 @@ export default function LoginPage() {
 
                   {error && (
                     <div className="rounded-lg bg-red-50 p-3 text-[13px] text-red-600 border border-red-100 text-center">
-                      {error}
+                      <p>{error}</p>
+                      {error.includes('Cannot connect to Local Depot Hub') && (
+                        <div className="mt-2.5 flex items-center justify-center gap-2">
+                          <button
+                            type="button"
+                            onClick={handleUseCloudMode}
+                            className="rounded-md bg-blue-600 px-3 py-1 text-xs font-semibold text-white hover:bg-blue-700 transition"
+                          >
+                            Switch to Cloud Mode
+                          </button>
+                        </div>
+                      )}
                     </div>
                   )}
 

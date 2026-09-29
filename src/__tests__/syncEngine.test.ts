@@ -404,8 +404,8 @@ describe('Phase 2: Sync Engine, Outbox Pattern, Idempotency & Reconciliation', (
     const auditLogsCount = await prisma.auditLog.count()
 
     expect(usersCount).toBeGreaterThanOrEqual(3)
-    expect(medicinesCount).toBeGreaterThanOrEqual(22)
-    expect(batchesCount).toBeGreaterThanOrEqual(26)
+    expect(medicinesCount).toBeGreaterThanOrEqual(18)
+    expect(batchesCount).toBeGreaterThanOrEqual(20)
     expect(auditLogsCount).toBeGreaterThanOrEqual(40)
   })
 

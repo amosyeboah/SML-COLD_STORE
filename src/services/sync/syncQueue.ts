@@ -284,7 +284,18 @@ export async function flushSyncQueue(): Promise<{
           const product = item.payload
           if (item.action === 'DELETE') {
             const { error } = await client.from('cloud_products').delete().eq('id', product.id)
-            if (error) uploadError = error
+            if (error) {
+              // Mark tombstone locally so product is not resurrected by cloud pulls
+              try {
+                const deletedIdsRaw = localStorage.getItem('sml_coldstore_deleted_medicine_ids')
+                const deletedIds = deletedIdsRaw ? JSON.parse(deletedIdsRaw) : []
+                if (!deletedIds.includes(product.id)) {
+                  deletedIds.push(product.id)
+                  localStorage.setItem('sml_coldstore_deleted_medicine_ids', JSON.stringify(deletedIds))
+                }
+              } catch {}
+              uploadError = error
+            }
           } else {
             const { error } = await client.from('cloud_products').upsert({
               id: product.id,

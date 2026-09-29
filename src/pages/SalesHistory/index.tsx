@@ -23,6 +23,95 @@ function getPaymentMethodColor(method: string) {
   return 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200'
 }
 
+export interface SalePaymentBreakdown {
+  cash: number
+  momo: number
+  other: number
+  isSplit: boolean
+  displayLabel: string
+}
+
+export function getSaleBreakdown(sale: any): SalePaymentBreakdown {
+  const total = Number(sale?.total) || 0
+
+  // 1. If explicit payments array exists with items
+  if (sale?.payments && Array.isArray(sale.payments) && sale.payments.length > 0) {
+    let cash = 0
+    let momo = 0
+    let other = 0
+    for (const p of sale.payments) {
+      const method = (p.method || '').toUpperCase()
+      const amt = Number(p.amount) || 0
+      if (method.includes('MOBILE') || method.includes('MOMO')) {
+        momo += amt
+      } else if (method.includes('CASH')) {
+        cash += amt
+      } else {
+        other += amt
+      }
+    }
+
+    const isSplit =
+      (sale.payments.length > 1 && ((cash > 0 && momo > 0) || (cash > 0 && other > 0) || (momo > 0 && other > 0))) ||
+      (sale.paymentMethod || '').toUpperCase().includes('SPLIT')
+
+    let displayLabel = 'CASH'
+    if (isSplit) {
+      displayLabel = `SPLIT (Cash ₵${cash.toFixed(2)} + MoMo ₵${momo.toFixed(2)}${other > 0 ? ` + Other ₵${other.toFixed(2)}` : ''})`
+    } else if (momo > 0 && cash === 0) {
+      displayLabel = 'MOMO'
+    } else if (other > 0 && cash === 0 && momo === 0) {
+      displayLabel = (sale.payments[0]?.method || 'OTHER').toUpperCase()
+    }
+
+    return { cash, momo, other, isSplit, displayLabel }
+  }
+
+  // 2. Parse paymentMethod string if encoded, e.g. "SPLIT:CASH=2700,MOBILE=300"
+  const pm = (sale?.paymentMethod || 'CASH').toUpperCase()
+  if (pm.startsWith('SPLIT:') || pm.includes('SPLIT')) {
+    const cashMatch = pm.match(/CASH[=:]\s*([0-9.]+)/i)
+    const mobileMatch = pm.match(/MOBILE[=:]\s*([0-9.]+)/i) || pm.match(/MOMO[=:]\s*([0-9.]+)/i)
+    const c = cashMatch ? parseFloat(cashMatch[1]) : 0
+    const m = mobileMatch ? parseFloat(mobileMatch[1]) : 0
+
+    if (c > 0 || m > 0) {
+      const remaining = Math.max(0, total - c - m)
+      return {
+        cash: c,
+        momo: m,
+        other: remaining,
+        isSplit: true,
+        displayLabel: `SPLIT (Cash ₵${c.toFixed(2)} + MoMo ₵${m.toFixed(2)}${remaining > 0 ? ` + Other ₵${remaining.toFixed(2)}` : ''})`,
+      }
+    }
+
+    // SPLIT without specific numbers: split 50/50
+    const half = Math.round((total / 2) * 100) / 100
+    const otherHalf = Math.round((total - half) * 100) / 100
+    return {
+      cash: half,
+      momo: otherHalf,
+      other: 0,
+      isSplit: true,
+      displayLabel: `SPLIT (Cash ₵${half.toFixed(2)} + MoMo ₵${otherHalf.toFixed(2)})`,
+    }
+  }
+
+  // 3. Direct Mobile / MoMo
+  if (pm.includes('MOBILE') || pm.includes('MOMO')) {
+    return { cash: 0, momo: total, other: 0, isSplit: false, displayLabel: 'MOMO' }
+  }
+
+  // 4. Other payment methods (Card / Bank)
+  if (pm.includes('CARD') || pm.includes('BANK')) {
+    return { cash: 0, momo: 0, other: total, isSplit: false, displayLabel: pm }
+  }
+
+  // 5. Default: Cash
+  return { cash: total, momo: 0, other: 0, isSplit: false, displayLabel: 'CASH' }
+}
+
 export default function SalesHistory() {
   const [searchTerm, setSearchTerm] = useState('')
   const [paymentFilter, setPaymentFilter] = useState('ALL')
@@ -69,20 +158,21 @@ export default function SalesHistory() {
 
   const filteredSales = sales.filter((s) => {
     const term = searchTerm.toLowerCase()
-    const invoiceId = `INV-${s.id.slice(0, 8).toUpperCase()}`
-    const customerName = s.customer?.name || 'Walk-in Customer'
+    const invoiceId = `INV-${(s.id || '').slice(0, 8).toUpperCase()}`
+    const customerName = s.customer?.name || s.customerName || 'Walk-in Customer'
     const matchesSearch = invoiceId.toLowerCase().includes(term) || customerName.toLowerCase().includes(term)
 
+    const breakdown = getSaleBreakdown(s)
     let matchesFilter = true
-    const pm = (s.paymentMethod || '').toUpperCase()
     if (paymentFilter === 'CASH') {
-      matchesFilter = pm === 'CASH' || pm.includes('CASH')
+      matchesFilter = breakdown.cash > 0
     } else if (paymentFilter === 'MOBILE') {
-      matchesFilter = pm === 'MOBILE' || pm === 'MOMO' || pm.includes('MOBILE') || pm.includes('MOMO')
+      matchesFilter = breakdown.momo > 0
     }
 
     let matchesDate = true
-    const saleDate = new Date(s.date)
+    const rawDate = s.date || s.created_at || s.createdAt
+    const saleDate = rawDate ? new Date(rawDate) : new Date()
     const today = new Date()
     if (dateFilter === 'TODAY') {
       matchesDate = saleDate >= startOfDay(today)
@@ -108,24 +198,9 @@ export default function SalesHistory() {
   const paginatedSales = filteredSales.slice(startIndex, startIndex + ITEMS_PER_PAGE)
 
   const totalRevenue = filteredSales.reduce((sum, s) => sum + (Number(s.total) || 0), 0)
-
-  const cashRevenue = filteredSales.reduce((sum, s) => {
-    const pm = (s.paymentMethod || '').toUpperCase()
-    if (pm === 'CASH' || pm.includes('CASH')) return sum + (Number(s.total) || 0)
-    if (pm === 'SPLIT' && s.payments) {
-      return sum + s.payments.filter((p:any) => p.method?.toUpperCase().includes('CASH')).reduce((acc:number, p:any) => acc + (Number(p.amount)||0), 0)
-    }
-    return sum
-  }, 0)
-
-  const momoRevenue = filteredSales.reduce((sum, s) => {
-    const pm = (s.paymentMethod || '').toUpperCase()
-    if (pm === 'MOBILE' || pm === 'MOMO' || pm.includes('MOBILE') || pm.includes('MOMO')) return sum + (Number(s.total) || 0)
-    if (pm === 'SPLIT' && s.payments) {
-      return sum + s.payments.filter((p:any) => p.method?.toUpperCase().includes('MOBILE') || p.method?.toUpperCase().includes('MOMO')).reduce((acc:number, p:any) => acc + (Number(p.amount)||0), 0)
-    }
-    return sum
-  }, 0)
+  const cashRevenue = filteredSales.reduce((sum, s) => sum + getSaleBreakdown(s).cash, 0)
+  const momoRevenue = filteredSales.reduce((sum, s) => sum + getSaleBreakdown(s).momo, 0)
+  const otherRevenue = filteredSales.reduce((sum, s) => sum + getSaleBreakdown(s).other, 0)
 
   return (
     <div className="h-full overflow-y-auto p-6 space-y-6 font-sans bg-slate-50">
@@ -144,7 +219,7 @@ export default function SalesHistory() {
             <h2 className="text-2xl font-bold">Sales History</h2>
             <p className="max-w-2xl text-sm text-indigo-50/90">View all past transactions, search by invoice or customer.</p>
           </div>
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+          <div className={`grid grid-cols-2 ${otherRevenue > 0 ? 'lg:grid-cols-5' : 'lg:grid-cols-4'} gap-4`}>
             <div className="rounded-xl border border-white/10 bg-gradient-to-br from-white/20 to-white/5 px-4 py-3 backdrop-blur shadow-sm">
               <p className="text-[11px] uppercase tracking-[0.2em] text-indigo-100 font-medium">Transactions</p>
               <p className="text-2xl font-bold text-white mt-1">{filteredSales.length}</p>
@@ -161,6 +236,12 @@ export default function SalesHistory() {
               <p className="text-[11px] uppercase tracking-[0.2em] text-sky-100 font-medium">MoMo Sales</p>
               <p className="text-2xl font-bold text-sky-50 mt-1">₵{momoRevenue.toFixed(2)}</p>
             </div>
+            {otherRevenue > 0 && (
+              <div className="rounded-xl border border-purple-400/20 bg-gradient-to-br from-purple-500/30 to-purple-400/10 px-4 py-3 backdrop-blur shadow-sm">
+                <p className="text-[11px] uppercase tracking-[0.2em] text-purple-100 font-medium">Other Sales</p>
+                <p className="text-2xl font-bold text-purple-50 mt-1">₵{otherRevenue.toFixed(2)}</p>
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -308,9 +389,21 @@ export default function SalesHistory() {
                         ₵{Number(sale.total).toFixed(2)}
                       </TableCell>
                       <TableCell>
-                        <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ${getPaymentMethodColor(sale.paymentMethod)}`}>
-                          {sale.paymentMethod?.includes('SPLIT') ? 'SPLIT' : sale.paymentMethod}
-                        </span>
+                        {(() => {
+                          const bd = getSaleBreakdown(sale)
+                          return (
+                            <span
+                              className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ${getPaymentMethodColor(sale.paymentMethod)}`}
+                              title={bd.displayLabel}
+                            >
+                              {bd.isSplit ? (
+                                <span>SPLIT (₵{bd.cash.toFixed(0)}C / ₵{bd.momo.toFixed(0)}M)</span>
+                              ) : (
+                                bd.displayLabel
+                              )}
+                            </span>
+                          )
+                        })()}
                       </TableCell>
                     </TableRow>
                   ))}
@@ -395,9 +488,14 @@ export default function SalesHistory() {
                 <div>
                   <p className="text-slate-500 mb-1">Payment Method</p>
                   <p className="font-semibold text-slate-800">
-                    <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-semibold ${getPaymentMethodColor(selectedSale.paymentMethod)}`}>
-                      {selectedSale.paymentMethod?.includes('SPLIT') ? 'SPLIT' : selectedSale.paymentMethod}
-                    </span>
+                    {(() => {
+                      const bd = getSaleBreakdown(selectedSale)
+                      return (
+                        <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-semibold ${getPaymentMethodColor(selectedSale.paymentMethod)}`}>
+                          {bd.isSplit ? 'SPLIT' : bd.displayLabel}
+                        </span>
+                      )
+                    })()}
                   </p>
                 </div>
               </div>
@@ -417,10 +515,16 @@ export default function SalesHistory() {
                     <TableBody>
                       {selectedSale.items?.map((item: any, i: number) => (
                         <TableRow key={i}>
-                          <TableCell className="font-medium text-slate-800">{item.medicine?.name || 'Unknown Item'}</TableCell>
-                          <TableCell className="text-center text-slate-600">{item.quantity}</TableCell>
-                          <TableCell className="text-right text-slate-600">₵{Number(item.price || item.medicine?.price || 0).toFixed(2)}</TableCell>
-                          <TableCell className="text-right font-semibold text-slate-800">₵{(Number(item.price || item.medicine?.price || 0) * item.quantity).toFixed(2)}</TableCell>
+                              <TableCell className="font-medium text-slate-800">
+                                {item.medicine?.name || item.product_name || item.name || 'Unknown Item'}
+                              </TableCell>
+                              <TableCell className="text-center text-slate-600">{item.quantity}</TableCell>
+                              <TableCell className="text-right text-slate-600">
+                                ₵{Number(item.price ?? item.unit_price ?? item.medicine?.price ?? 0).toFixed(2)}
+                              </TableCell>
+                              <TableCell className="text-right font-semibold text-slate-800">
+                                ₵{(Number(item.subtotal ?? ((item.price ?? item.unit_price ?? item.medicine?.price ?? 0) * (item.quantity || 0)))).toFixed(2)}
+                              </TableCell>
                         </TableRow>
                       ))}
                     </TableBody>
@@ -434,20 +538,40 @@ export default function SalesHistory() {
                     <span>Total:</span>
                     <span className="text-indigo-600">₵{Number(selectedSale.total).toFixed(2)}</span>
                   </div>
-                  {selectedSale.paymentMethod?.includes('SPLIT') && selectedSale.payments && (
-                    <div className="mt-4 text-sm text-slate-600 border-t pt-3 space-y-2">
-                      <p className="font-medium text-slate-800 mb-1 uppercase tracking-wider text-xs">Split Breakdown</p>
-                      {selectedSale.payments.filter((p:any) => p.amount > 0).map((p: any, i: number) => (
-                        <div key={i} className="flex justify-between items-center">
-                          <span className="flex items-center gap-2">
-                            <span className={`w-2 h-2 rounded-full ${p.method?.includes('CASH') ? 'bg-emerald-500' : p.method?.includes('MOBILE') ? 'bg-amber-500' : 'bg-slate-500'}`}></span>
-                            {p.method}
-                          </span>
-                          <span className="font-bold text-slate-800">₵{Number(p.amount).toFixed(2)}</span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
+                  {(() => {
+                    const bd = getSaleBreakdown(selectedSale)
+                    if (!bd.isSplit && (!selectedSale.payments || selectedSale.payments.length <= 1)) return null
+
+                    const paymentEntries =
+                      selectedSale.payments && selectedSale.payments.length > 0
+                        ? selectedSale.payments.filter((p: any) => Number(p.amount) > 0)
+                        : [
+                            ...(bd.cash > 0 ? [{ method: 'CASH', amount: bd.cash }] : []),
+                            ...(bd.momo > 0 ? [{ method: 'MOBILE', amount: bd.momo }] : []),
+                            ...(bd.other > 0 ? [{ method: 'OTHER', amount: bd.other }] : []),
+                          ]
+
+                    return (
+                      <div className="mt-4 text-sm text-slate-600 border-t pt-3 space-y-2">
+                        <p className="font-medium text-slate-800 mb-1 uppercase tracking-wider text-xs">Split Breakdown</p>
+                        {paymentEntries.map((p: any, i: number) => {
+                          const mUpper = (p.method || '').toUpperCase()
+                          const isCash = mUpper.includes('CASH')
+                          const isMob = mUpper.includes('MOBILE') || mUpper.includes('MOMO')
+                          const label = isMob ? 'Mobile Money (MoMo)' : isCash ? 'Cash' : p.method
+                          return (
+                            <div key={i} className="flex justify-between items-center">
+                              <span className="flex items-center gap-2">
+                                <span className={`w-2 h-2 rounded-full ${isCash ? 'bg-emerald-500' : isMob ? 'bg-amber-500' : 'bg-slate-500'}`}></span>
+                                {label}
+                              </span>
+                              <span className="font-bold text-slate-800">₵{Number(p.amount).toFixed(2)}</span>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    )
+                  })()}
                 </div>
               </div>
 

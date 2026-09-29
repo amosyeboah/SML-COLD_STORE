@@ -34,6 +34,7 @@ import {
 import type { Category, Customer } from '@/types'
 import { cn } from '@/utils'
 import { bluetoothPrinter, BluetoothPrinterStatus } from '@/services/hardware/bluetoothPrinter'
+import { api } from '@/services/api'
 
 export interface SplitPaymentEntry {
   method: 'CASH' | 'MOBILE'
@@ -747,14 +748,14 @@ function CartPanelContent({
         <button
           onClick={async () => {
             try {
-              const result = await window.api.openCashDrawer()
+              const result = await api.openCashDrawer()
               if (result?.success) {
                 setToast({ type: 'success', message: 'Cash drawer opened' })
               } else {
-                setToast({ type: 'error', message: result?.reason || 'Failed to open cash drawer' })
+                setToast({ type: 'error', message: result?.reason || result?.error || 'Failed to open cash drawer' })
               }
-            } catch {
-              setToast({ type: 'error', message: 'Cash drawer not available' })
+            } catch (err: any) {
+              setToast({ type: 'error', message: err?.message || 'Cash drawer not available' })
             }
           }}
           className="flex items-center justify-center gap-1.5 rounded-xl border border-slate-200 py-2 text-xs font-medium text-slate-500 transition-colors hover:bg-slate-50 active:scale-95"
@@ -999,12 +1000,21 @@ export default function POS() {
           <hr style="border-top:1px dashed #000;margin:8px 0;"/>
           <p style="text-align:center;margin:0;font-size:9px;color:#555;">Software developed by Paylite<br/>www.mypaylite.com | 0207131415</p>
         </div>`
-      await window.api.printReceipt(receiptHTML)
+      try {
+        const pRes = await api.printReceipt(receiptHTML)
+        if (pRes && pRes.success === false && pRes.error) {
+          console.warn('Bluetooth receipt print issue:', pRes.error)
+        }
+      } catch (printErr) {
+        console.warn('Receipt print failed:', printErr)
+      }
 
       // Auto-open cash drawer for cash payments
       const hasCashPayment = paymentMethod === 'CASH' || (isSplit && activePayments.some((p) => p.method === 'CASH' && p.amount > 0))
       if (hasCashPayment) {
-        try { await window.api.openCashDrawer() } catch { /* drawer may not be enabled */ }
+        try { 
+          await api.openCashDrawer() 
+        } catch { /* drawer may not be enabled */ }
       }
 
       const finalChangeDue = typeof cashTendered === 'number'
@@ -1223,7 +1233,11 @@ export default function POS() {
 
     const activePayments = paymentMethod === 'SPLIT'
       ? splitPayments.filter((p) => p.amount > 0).map((p) => ({
-          method: (p.method || '').toUpperCase().includes('MOBILE') ? ('MOBILE' as const) : ('CASH' as const),
+          method:
+            (p.method || '').toUpperCase().includes('MOBILE') ||
+            (p.method || '').toUpperCase().includes('MOMO')
+              ? ('MOBILE' as const)
+              : ('CASH' as const),
           amount: Number(p.amount) || 0,
         }))
       : [{ method: paymentMethod === 'MOBILE' ? ('MOBILE' as const) : ('CASH' as const), amount: total }]
@@ -1261,7 +1275,7 @@ export default function POS() {
         }
         if (e.key === 'p' || e.key === 'P') {
           e.preventDefault()
-          window.api.printReceipt(confirmedPayment.receiptHTML)
+          api.printReceipt(confirmedPayment.receiptHTML)
           setToast({ type: 'success', message: 'Receipt print sent' })
           return
         }
@@ -1417,11 +1431,15 @@ export default function POS() {
                 <button
                   type="button"
                   onClick={async () => {
-                    await window.api.printReceipt(confirmedPayment.receiptHTML)
-                    setToast({
-                      type: 'success',
-                      message: btStatus.isConnected ? 'Receipt sent to Bluetooth printer!' : 'Receipt print sent',
-                    })
+                    const res = await api.printReceipt(confirmedPayment.receiptHTML)
+                    if (res?.success === false && res?.error) {
+                      setToast({ type: 'error', message: res.error })
+                    } else {
+                      setToast({
+                        type: 'success',
+                        message: btStatus.isConnected ? 'Receipt sent to Bluetooth printer!' : 'Receipt print sent',
+                      })
+                    }
                   }}
                   className="flex items-center justify-center gap-2 rounded-2xl border border-slate-300 bg-white py-3.5 text-xs sm:text-sm font-bold text-slate-700 shadow-sm hover:bg-slate-50 active:scale-95 transition-all"
                 >

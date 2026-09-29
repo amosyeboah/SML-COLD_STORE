@@ -528,7 +528,7 @@ export default function SyncPage() {
                       {filteredOutbox.map((item) => (
                         <TableRow key={item.id} className="text-xs border-b border-slate-100">
                           <TableCell className="font-mono text-[11px] text-slate-600">
-                            {item.eventId.slice(0, 16)}...
+                            {item.eventId?.slice(0, 16) || 'N/A'}...
                           </TableCell>
                           <TableCell className="font-semibold text-slate-700">
                             {item.entityType}
@@ -808,7 +808,7 @@ export default function SyncPage() {
                       {sessions.map((log) => (
                         <TableRow key={log.id} className="text-xs border-b border-slate-100">
                           <TableCell className="font-mono text-[11px] text-slate-600">
-                            {log.sessionId.slice(0, 16)}...
+                            {log.sessionId?.slice(0, 16) || 'N/A'}...
                           </TableCell>
                           <TableCell className="text-slate-600">
                             {new Date(log.startedAt).toLocaleTimeString()}

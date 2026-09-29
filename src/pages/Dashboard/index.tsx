@@ -37,18 +37,20 @@ import { cn } from '@/utils'
 function Sparkline({ data, color }: { data: number[]; color: string }) {
   const chartData = data.map((v, i) => ({ i, v }))
   return (
-    <ResponsiveContainer width="100%" height={48}>
-      <LineChart data={chartData}>
-        <Line
-          type="monotone"
-          dataKey="v"
-          stroke={color}
-          strokeWidth={2}
-          dot={false}
-          isAnimationActive={false}
-        />
-      </LineChart>
-    </ResponsiveContainer>
+    <div style={{ minWidth: 0, minHeight: 48 }}>
+      <ResponsiveContainer width="100%" height={48}>
+        <LineChart data={chartData}>
+          <Line
+            type="monotone"
+            dataKey="v"
+            stroke={color}
+            strokeWidth={2}
+            dot={false}
+            isAnimationActive={false}
+          />
+        </LineChart>
+      </ResponsiveContainer>
+    </div>
   )
 }
 
@@ -207,7 +209,7 @@ export default function Dashboard() {
                   📅 This Week
                 </button>
               </div>
-              <div className="h-[200px] sm:h-[220px] w-full">
+              <div className="h-[200px] sm:h-[220px] w-full" style={{ minHeight: 160, minWidth: 0 }}>
                 <ResponsiveContainer width="100%" height="100%">
                   <AreaChart data={stats?.salesOverviewData || []} margin={{ top: 10, right: 0, left: -20, bottom: 0 }}>
                     <defs>
@@ -246,8 +248,8 @@ export default function Dashboard() {
                 </button>
               </div>
               <div className="space-y-3">
-                {(stats?.topMedicines || []).slice(0, 5).map((med: any) => (
-                  <div key={med.rank} className="flex items-center gap-2.5 sm:gap-3">
+                {(stats?.topMedicines || []).slice(0, 5).map((med: any, _idx: number) => (
+                  <div key={`${med.id ?? med.name ?? med.rank ?? _idx}`} className="flex items-center gap-2.5 sm:gap-3">
                     <span className="w-5 text-xs font-bold text-slate-400 text-center flex-shrink-0">{med.rank}</span>
                     <div className="w-9 h-9 rounded-xl bg-sky-50 flex items-center justify-center flex-shrink-0">
                       <Package className="w-4 h-4 text-sky-600" />
@@ -323,7 +325,7 @@ export default function Dashboard() {
               </div>
               <div className="space-y-3">
                 {(stats?.recentTransactions || []).slice(0, 5).map((tx: any) => (
-                  <div key={tx.id} className="flex items-center gap-3 group">
+                  <div key={tx.id ?? tx._id ?? `${tx.date}-${tx.time}-${tx.amount}`} className="flex items-center gap-3 group">
                     <div className="w-8 h-8 rounded-lg bg-indigo-50 flex items-center justify-center flex-shrink-0">
                       <Receipt className="w-3.5 h-3.5 text-indigo-500" />
                     </div>
@@ -424,8 +426,8 @@ export default function Dashboard() {
             <DialogTitle>All Top Selling Products (MTD)</DialogTitle>
           </DialogHeader>
           <div className="flex-1 overflow-y-auto pr-2 space-y-3 mt-4">
-            {(stats?.topMedicines || []).map((med: any) => (
-              <div key={med.rank} className="flex items-center gap-3 p-3 rounded-xl border border-slate-100 hover:bg-slate-50 transition-colors">
+            {(stats?.topMedicines || []).map((med: any, _idx: number) => (
+              <div key={`${med.id ?? med.name ?? med.rank ?? _idx}`} className="flex items-center gap-3 p-3 rounded-xl border border-slate-100 hover:bg-slate-50 transition-colors">
                 <span className="w-6 text-sm font-bold text-slate-400 text-center flex-shrink-0">{med.rank}</span>
                 <div className="w-10 h-10 rounded-xl bg-sky-50 flex items-center justify-center flex-shrink-0">
                   <Package className="w-4 h-4 text-sky-600" />

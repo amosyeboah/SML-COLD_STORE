@@ -30,12 +30,14 @@ import {
   BluetoothConnected,
   BluetoothOff,
   Smartphone,
+  Archive,
 } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { bluetoothPrinter, BluetoothPrinterStatus, PaperWidth } from '@/services/hardware/bluetoothPrinter'
+import { api } from '@/services/api'
 
 // ── Default settings values ──────────────────────────────────────────────────
 const DEFAULTS: Record<string, string> = {
@@ -199,6 +201,29 @@ export default function Settings() {
       setBtFeedback({ type: 'success', message: 'Test receipt sent to Bluetooth printer!' })
     } else {
       setBtFeedback({ type: 'error', message: res.error || 'Failed to send test print' })
+    }
+  }
+
+  const handleTestDrawerBt = async () => {
+    setBtFeedback(null)
+    const res = await bluetoothPrinter.openCashDrawer()
+    if (res.success) {
+      setBtFeedback({ type: 'success', message: 'Cash drawer trigger pulse sent to Bluetooth printer!' })
+    } else {
+      setBtFeedback({ type: 'error', message: res.error || 'Failed to trigger cash drawer' })
+    }
+  }
+
+  const handleTestDrawer = async () => {
+    try {
+      const res = await api.openCashDrawer()
+      if (res?.success) {
+        alert('Cash drawer opened successfully!')
+      } else {
+        alert(res?.reason || res?.error || 'Failed to trigger cash drawer. Ensure drawer is connected and configured.')
+      }
+    } catch (e: any) {
+      alert(e?.message || 'Cash drawer error')
     }
   }
 
@@ -884,6 +909,16 @@ export default function Settings() {
 
                         <Button
                           type="button"
+                          variant="outline"
+                          onClick={handleTestDrawerBt}
+                          className="flex items-center gap-2 border-purple-300 bg-purple-50 text-purple-700 hover:bg-purple-100"
+                        >
+                          <Archive className="h-4 w-4 text-purple-600" />
+                          Test Cash Drawer
+                        </Button>
+
+                        <Button
+                          type="button"
                           variant="ghost"
                           onClick={handleDisconnectBt}
                           className="text-rose-600 hover:bg-rose-50 hover:text-rose-700"
@@ -978,6 +1013,17 @@ export default function Settings() {
                       disabled={!bool('hw.drawerEnabled')}
                     />
                   </FieldRow>
+                  <div className="flex items-center gap-3 pt-1">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={handleTestDrawer}
+                      className="flex items-center gap-2 border-slate-300 text-slate-700 hover:bg-slate-50 text-xs"
+                    >
+                      <Archive className="h-4 w-4" />
+                      Test Open Cash Drawer
+                    </Button>
+                  </div>
                   <div className="rounded-lg border border-gray-100 bg-gray-50 p-3">
                     <p className="text-xs text-gray-500">
                       The cash drawer will open automatically after each <strong>cash sale</strong> is completed at the POS. Pulse duration controls the open trigger length.

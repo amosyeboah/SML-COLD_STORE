@@ -19,6 +19,8 @@ export type StockReferenceType =
   | 'ADJUSTMENT'
   | 'INITIAL'
   | 'MANUAL'
+  | 'SALE_REFUND'
+  | 'RETURN'
 
 export type DeviceType = 'DESKTOP' | 'TABLET' | 'MOBILE' | 'WEB'
 

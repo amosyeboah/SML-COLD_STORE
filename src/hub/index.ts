@@ -5,7 +5,7 @@ import { startPeriodicSyncWorker, stopPeriodicSyncWorker } from './services/sync
 let activeServer: FastifyInstance | null = null
 
 export async function startHubServer(
-  port = Number(process.env.HUB_PORT) || 4820,
+  port = Number(process.env.HUB_PORT) || 4821,
   host = process.env.HUB_HOST || '0.0.0.0'
 ): Promise<{ server: FastifyInstance; port: number; host: string; address: string }> {
   if (activeServer) {

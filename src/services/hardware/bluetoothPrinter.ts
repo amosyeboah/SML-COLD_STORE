@@ -10,8 +10,14 @@ const KNOWN_PRINTER_SERVICES = [
   '6e400001-b5a3-f393-e0a9-e50e24dcca9e', // Nordic UART Service standard
   '0000ff00-0000-1000-8000-00805f9b34fb', // Generic Serial service
   '0000ffe0-0000-1000-8000-00805f9b34fb', // HM-10 UART
+  '0000ffe5-0000-1000-8000-00805f9b34fb', // Rongta / MPT-II UART
+  '0000fff0-0000-1000-8000-00805f9b34fb', // Milestone / POS printer
+  '0000ffff-0000-1000-8000-00805f9b34fb', // Generic ESC/POS
+  '0000ae00-0000-1000-8000-00805f9b34fb', // Android thermal printer
+  '0000ae01-0000-1000-8000-00805f9b34fb', // Android thermal printer secondary
+  '0000af00-0000-1000-8000-00805f9b34fb', // Cat / PeriPage / Paperang
   '000018f1-0000-1000-8000-00805f9b34fb', // Secondary printer service
-  '0000fee7-0000-1000-8000-00805f9b34fb', // Tencent POS service
+  '0000fee7-0000-1000-8000-00805f9b34fb', // Tencent POS / Microchip service
   '0000e7cf-0000-1000-8000-00805f9b34fb',
 ]
 
@@ -22,7 +28,13 @@ const KNOWN_WRITE_CHARACTERISTICS = [
   'bef8d6c9-9c21-4c9e-b632-bd58c1009914',
   '6e400002-b5a3-f393-e0a9-e50e24dcca9e',
   '0000ff02-0000-1000-8000-00805f9b34fb',
+  '0000ff01-0000-1000-8000-00805f9b34fb',
   '0000ffe1-0000-1000-8000-00805f9b34fb',
+  '0000ffe2-0000-1000-8000-00805f9b34fb',
+  '0000fff1-0000-1000-8000-00805f9b34fb',
+  '0000fff2-0000-1000-8000-00805f9b34fb',
+  '0000ae01-0000-1000-8000-00805f9b34fb',
+  '0000ae02-0000-1000-8000-00805f9b34fb',
   '0000fec7-0000-1000-8000-00805f9b34fb',
   '0000fec8-0000-1000-8000-00805f9b34fb',
   '0000e702-0000-1000-8000-00805f9b34fb',
@@ -139,7 +151,7 @@ class BluetoothPrinterService {
               (c: any) =>
                 c.properties?.writeWithoutResponse ||
                 c.properties?.write ||
-                KNOWN_WRITE_CHARACTERISTICS.includes(c.uuid.toLowerCase())
+                KNOWN_WRITE_CHARACTERISTICS.includes(c.uuid?.toLowerCase())
             )
             if (characteristic) break
           }
@@ -221,28 +233,68 @@ class BluetoothPrinterService {
   }
 
   /**
-   * Send raw binary data chunks to Bluetooth printer
+   * Send raw binary data chunks to Bluetooth printer with write mode fallbacks
    */
   public async sendRawBytes(bytes: Uint8Array): Promise<{ success: boolean; error?: string }> {
     if (!this.writeCharacteristic) {
       return { success: false, error: 'Bluetooth printer is not connected' }
     }
 
-    const CHUNK_SIZE = 100 // Safe BLE MTU write size
+    const CHUNK_SIZE = 64 // Optimal BLE MTU write size across 58mm/80mm thermal printers
     try {
       for (let offset = 0; offset < bytes.length; offset += CHUNK_SIZE) {
         const chunk = bytes.slice(offset, offset + CHUNK_SIZE)
-        if (this.writeCharacteristic.properties?.writeWithoutResponse) {
-          await this.writeCharacteristic.writeValueWithoutResponse(chunk)
-        } else {
-          await this.writeCharacteristic.writeValue(chunk)
+        
+        let written = false
+        if (this.writeCharacteristic.properties?.writeWithoutResponse && typeof this.writeCharacteristic.writeValueWithoutResponse === 'function') {
+          try {
+            await this.writeCharacteristic.writeValueWithoutResponse(chunk)
+            written = true
+          } catch {
+            written = false
+          }
         }
-        await new Promise((resolve) => setTimeout(resolve, 30))
+        
+        if (!written) {
+          if (typeof this.writeCharacteristic.writeValue === 'function') {
+            await this.writeCharacteristic.writeValue(chunk)
+          } else if (typeof this.writeCharacteristic.writeValueWithResponse === 'function') {
+            await this.writeCharacteristic.writeValueWithResponse(chunk)
+          }
+        }
+
+        await new Promise((resolve) => setTimeout(resolve, 25))
       }
       return { success: true }
     } catch (err: any) {
       console.error('Bluetooth write error:', err)
       return { success: false, error: err?.message || 'Failed to send data to printer' }
+    }
+  }
+
+  /**
+   * Kick open cash drawer via connected Bluetooth printer (ESC/POS pulse codes for pin 2, pin 5, real-time & BEL)
+   */
+  public async openCashDrawer(): Promise<{ success: boolean; error?: string }> {
+    if (!this.getStatus().isConnected) {
+      return { success: false, error: 'Bluetooth printer is not connected' }
+    }
+
+    try {
+      // Comprehensive ESC/POS cash drawer kick bytecode:
+      // 1. ESC p 0 25 250 (Pin 2 kick)
+      // 2. ESC p 1 25 250 (Pin 5 kick)
+      // 3. DLE DC4 1 0 5 (Real-time pulse kick)
+      // 4. 0x07 (BEL trigger)
+      const kickCommand = new Uint8Array([
+        0x1b, 0x70, 0x00, 0x19, 0xfa,
+        0x1b, 0x70, 0x01, 0x19, 0xfa,
+        0x10, 0x14, 0x01, 0x00, 0x05,
+        0x07,
+      ])
+      return await this.sendRawBytes(kickCommand)
+    } catch (err: any) {
+      return { success: false, error: err?.message || 'Failed to send cash drawer kick command' }
     }
   }
 
