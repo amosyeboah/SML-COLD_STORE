@@ -1,3 +1,4 @@
+globalThis.WebSocket = require('ws');
 const { createClient } = require('@supabase/supabase-js');
 require('dotenv').config();
 

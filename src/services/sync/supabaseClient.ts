@@ -88,6 +88,15 @@ export function getSupabaseClient(): SupabaseClient | null {
   }
 
   try {
+    if (typeof globalThis !== 'undefined' && typeof (globalThis as any).WebSocket === 'undefined') {
+      try {
+        const wsModule = typeof require !== 'undefined' ? require('ws') : null
+        if (wsModule) {
+          (globalThis as any).WebSocket = wsModule
+        }
+      } catch {}
+    }
+
     cachedClient = createClient(config.url, config.anonKey, {
       auth: {
         persistSession: false,
@@ -171,7 +180,7 @@ export async function checkCloudConnection(): Promise<ConnectionCheckResult> {
   } catch (err: any) {
     const latencyMs = Date.now() - startTime
     const isOffline =
-      !navigator.onLine ||
+      (typeof navigator !== 'undefined' && !navigator.onLine) ||
       err.name === 'AbortError' ||
       err.message?.includes('Failed to fetch') ||
       err.message?.includes('NetworkError')

@@ -84,6 +84,8 @@ function setItem<T>(key: string, value: T): void {
   localStorage.setItem(key, JSON.stringify(value))
 }
 
+const isOnline = (): boolean => (typeof navigator !== 'undefined' ? Boolean(navigator.onLine) : true)
+
 /**
  * Fetches latest sales and items directly from Supabase Cloud.
  * Caches and merges them into local storage so web portal displays real-time data automatically.
@@ -91,7 +93,7 @@ function setItem<T>(key: string, value: T): void {
 export async function fetchCloudSalesIfAvailable(): Promise<any[]> {
   const localSales = getItem<any[]>(STORAGE_KEYS.SALES, [])
   const client = getSupabaseClient()
-  if (!client || !navigator.onLine) {
+  if (!client || !isOnline()) {
     return localSales
   }
 
@@ -190,7 +192,7 @@ export async function fetchCloudProductsIfAvailable(): Promise<any[]> {
   const localMeds = getItem<any[]>(STORAGE_KEYS.MEDICINES, [])
   const deletedIds = new Set(getItem<string[]>(STORAGE_KEYS.DELETED_MEDICINE_IDS, []))
   const client = getSupabaseClient()
-  if (!client || !navigator.onLine) {
+  if (!client || !isOnline()) {
     return localMeds.filter((m) => !deletedIds.has(m.id))
   }
 
@@ -276,7 +278,7 @@ export async function fetchCloudBatchesIfAvailable(): Promise<any[]> {
   const deletedMedIds = new Set(getItem<string[]>(STORAGE_KEYS.DELETED_MEDICINE_IDS, []))
   const deletedBatchIds = new Set(getItem<string[]>(STORAGE_KEYS.DELETED_BATCH_IDS, []))
   const client = getSupabaseClient()
-  if (!client || !navigator.onLine) {
+  if (!client || !isOnline()) {
     return localBatches.filter((b) => !deletedBatchIds.has(b.id) && !deletedMedIds.has(b.medicineId))
   }
 
@@ -338,7 +340,7 @@ export async function fetchCloudBatchesIfAvailable(): Promise<any[]> {
  */
 export async function pushCloudStateMirror(stateId: string, category: string, dataKey: string, payload: any): Promise<void> {
   const client = getSupabaseClient()
-  if (!client || !navigator.onLine) return
+  if (!client || !isOnline()) return
   try {
     const { data } = await client.from('cloud_audit_logs').select('metadata').eq('id', stateId).single()
     let mergedPayload = payload
@@ -371,7 +373,7 @@ export async function pushCloudStateMirror(stateId: string, category: string, da
  */
 export async function fetchCloudStateMirrorsIfAvailable(): Promise<void> {
   const client = getSupabaseClient()
-  if (!client || !navigator.onLine) return
+  if (!client || !isOnline()) return
   try {
     const { data, error } = await client
       .from('cloud_audit_logs')
@@ -977,7 +979,7 @@ export const mobileApi = {
     enqueueSyncItem('PRODUCT', 'INSERT', newMed)
 
     const client = getSupabaseClient()
-    if (client && navigator.onLine) {
+    if (client && isOnline()) {
       client.from('cloud_products').upsert({
         id: newMed.id,
         store_id: 'sml_accra_main',
@@ -1028,7 +1030,7 @@ export const mobileApi = {
       }
 
       const client = getSupabaseClient()
-      if (client && navigator.onLine) {
+      if (client && isOnline()) {
         client.from('cloud_products').upsert({
           id: medicines[idx].id,
           store_id: 'sml_accra_main',
@@ -1067,7 +1069,7 @@ export const mobileApi = {
     enqueueSyncItem('PRODUCT', 'DELETE', { id })
 
     const client = getSupabaseClient()
-    if (client && navigator.onLine) {
+    if (client && isOnline()) {
       try {
         await client.from('cloud_batches').delete().eq('product_id', id)
         await client.from('cloud_products').delete().eq('id', id)
@@ -1102,7 +1104,7 @@ export const mobileApi = {
     enqueueSyncItem('BATCH', 'INSERT', newBatch)
 
     const client = getSupabaseClient()
-    if (client && navigator.onLine) {
+    if (client && isOnline()) {
       client.from('cloud_batches').upsert({
         id: newBatch.id,
         product_id: newBatch.medicineId,
@@ -1123,7 +1125,7 @@ export const mobileApi = {
       enqueueSyncItem('BATCH', 'UPDATE', batches[idx])
 
       const client = getSupabaseClient()
-      if (client && navigator.onLine) {
+      if (client && isOnline()) {
         client.from('cloud_batches').upsert({
           id: batches[idx].id,
           product_id: batches[idx].medicineId,
@@ -1148,7 +1150,7 @@ export const mobileApi = {
     setItem(STORAGE_KEYS.BATCHES, batches.filter(b => b.id !== id))
 
     const client = getSupabaseClient()
-    if (client && navigator.onLine) {
+    if (client && isOnline()) {
       try {
         await client.from('cloud_batches').delete().eq('id', id)
       } catch (err) {
@@ -1310,7 +1312,7 @@ export const mobileApi = {
 
     // Direct push to Supabase if online
     const client = getSupabaseClient()
-    if (client && navigator.onLine) {
+    if (client && isOnline()) {
       client.from('cloud_sales').upsert({
         id: newSale.id,
         store_id: 'sml_accra_main',
@@ -1399,7 +1401,7 @@ export const mobileApi = {
 
     // Delete from Supabase if online
     const client = getSupabaseClient()
-    if (client && navigator.onLine) {
+    if (client && isOnline()) {
       client.from('cloud_sale_items').delete().eq('sale_id', id).then(() => {}).catch(() => {})
       client.from('cloud_sales').delete().eq('id', id).then(() => {}).catch(() => {})
     }

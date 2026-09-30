@@ -97,7 +97,8 @@ export function enqueueSyncItem(entity: SyncEntity, action: SyncAction, payload:
   saveQueue(queue)
 
   // If online, attempt background flush
-  if (navigator.onLine && !isCurrentlySyncing) {
+  const isOnline = typeof navigator !== 'undefined' ? navigator.onLine : false
+  if (isOnline && !isCurrentlySyncing) {
     flushSyncQueue().catch((err) => console.warn('Background auto-sync failed:', err))
   }
 
