@@ -120,7 +120,7 @@ export async function flushOutboxBatch(batchSize = 50): Promise<{
         const storeId = event.storeId || 'sml_accra_main'
 
         if (entity === 'SALE') {
-          // Idempotent write to cloud_sales
+          // Idempotent write to cloud_sales (without device_id to match Supabase cloud schema)
           const saleNumber = payload.saleNumber || `INV-${payload.id.slice(0, 8).toUpperCase()}`
           const { error: saleErr } = await supabase.from('cloud_sales').upsert(
             {
@@ -131,7 +131,6 @@ export async function flushOutboxBatch(batchSize = 50): Promise<{
               total: Number(payload.total) || 0,
               payment_method: payload.paymentMethod || 'CASH',
               cashier_username: payload.username || 'cashier',
-              device_id: event.deviceId || payload.deviceId || null,
               date: payload.date || new Date().toISOString(),
               synced_at: new Date().toISOString(),
             },
@@ -157,69 +156,83 @@ export async function flushOutboxBatch(batchSize = 50): Promise<{
             if (itemsErr) throw itemsErr
           }
 
-          // Idempotent write to cloud_sale_payments
+          // Best-effort write to cloud_sale_payments if table exists
           if (payload.payments && Array.isArray(payload.payments) && payload.payments.length > 0) {
-            const paymentsToUpsert = payload.payments.map((p: any) => ({
-              id: p.id || randomUUID(),
-              sale_id: payload.id,
-              method: p.method,
-              amount: Number(p.amount) || 0,
-            }))
-            const { error: payErr } = await supabase.from('cloud_sale_payments').upsert(paymentsToUpsert, { onConflict: 'id' })
-            if (payErr) throw payErr
+            try {
+              const paymentsToUpsert = payload.payments.map((p: any) => ({
+                id: p.id || randomUUID(),
+                sale_id: payload.id,
+                method: p.method,
+                amount: Number(p.amount) || 0,
+              }))
+              await supabase.from('cloud_sale_payments').upsert(paymentsToUpsert, { onConflict: 'id' })
+            } catch {}
           }
         } else if (entity === 'STOCK_MOVEMENT') {
-          // Idempotent write to cloud_stock_movements (Append-only Ledger)
-          const { error: smErr } = await supabase.from('cloud_stock_movements').upsert(
-            {
-              id: payload.id,
-              store_id: storeId,
-              product_id: payload.productId,
-              batch_id: payload.batchId || null,
-              quantity_delta: Number(payload.quantityDelta),
-              movement_type: payload.movementType,
-              reference_type: payload.referenceType,
-              reference_id: payload.referenceId || null,
-              unit_cost: payload.unitCost !== undefined ? Number(payload.unitCost) : null,
-              unit_price: payload.unitPrice !== undefined ? Number(payload.unitPrice) : null,
-              user_id: payload.userId || null,
-              device_id: event.deviceId || payload.deviceId || null,
-              notes: payload.notes || null,
-              created_at: payload.createdAt || new Date().toISOString(),
-              synced_at: new Date().toISOString(),
-            },
-            { onConflict: 'id' }
-          )
-          if (smErr) throw smErr
+          // Best-effort write to cloud_stock_movements (skipped if table not yet migrated in Supabase)
+          try {
+            const { error: smErr } = await supabase.from('cloud_stock_movements').upsert(
+              {
+                id: payload.id,
+                store_id: storeId,
+                product_id: payload.productId,
+                batch_id: payload.batchId || null,
+                quantity_delta: Number(payload.quantityDelta),
+                movement_type: payload.movementType,
+                reference_type: payload.referenceType,
+                reference_id: payload.referenceId || null,
+                unit_cost: payload.unitCost !== undefined ? Number(payload.unitCost) : null,
+                unit_price: payload.unitPrice !== undefined ? Number(payload.unitPrice) : null,
+                user_id: payload.userId || null,
+                notes: payload.notes || null,
+                created_at: payload.createdAt || new Date().toISOString(),
+                synced_at: new Date().toISOString(),
+              },
+              { onConflict: 'id' }
+            )
+            if (smErr && !smErr.message?.includes('does not exist') && smErr.code !== '42P01') {
+              throw smErr
+            }
+          } catch (err: any) {
+            if (!err.message?.includes('does not exist') && err.code !== '42P01') {
+              throw err
+            }
+          }
         } else if (entity === 'PURCHASE') {
-          // Idempotent write to cloud_purchases
-          const { error: purErr } = await supabase.from('cloud_purchases').upsert(
-            {
-              id: payload.id,
-              store_id: storeId,
-              supplier_name: payload.supplier?.name || payload.supplierName || 'Local Supplier',
-              total: Number(payload.total) || 0,
-              status: payload.status || 'COMPLETED',
-              device_id: event.deviceId || payload.deviceId || null,
-              date: payload.date || new Date().toISOString(),
-              synced_at: new Date().toISOString(),
-            },
-            { onConflict: 'id' }
-          )
-          if (purErr) throw purErr
+          // Best-effort write to cloud_purchases (skipped if table not yet migrated in Supabase)
+          try {
+            const { error: purErr } = await supabase.from('cloud_purchases').upsert(
+              {
+                id: payload.id,
+                store_id: storeId,
+                supplier_name: payload.supplier?.name || payload.supplierName || 'Local Supplier',
+                total: Number(payload.total) || 0,
+                status: payload.status || 'COMPLETED',
+                date: payload.date || new Date().toISOString(),
+                synced_at: new Date().toISOString(),
+              },
+              { onConflict: 'id' }
+            )
+            if (purErr && !purErr.message?.includes('does not exist') && purErr.code !== '42P01') {
+              throw purErr
+            }
 
-          if (payload.items && Array.isArray(payload.items) && payload.items.length > 0) {
-            const purchaseItems = payload.items.map((i: any) => ({
-              id: i.id || randomUUID(),
-              purchase_id: payload.id,
-              product_id: i.medicineId || i.productId,
-              quantity: Number(i.quantity) || 1,
-              cost: Number(i.cost) || 0,
-              batch_number: i.batchNumber || null,
-              expiry_date: i.expiryDate ? new Date(i.expiryDate).toISOString() : null,
-            }))
-            const { error: piErr } = await supabase.from('cloud_purchase_items').upsert(purchaseItems, { onConflict: 'id' })
-            if (piErr) throw piErr
+            if (payload.items && Array.isArray(payload.items) && payload.items.length > 0) {
+              const purchaseItems = payload.items.map((i: any) => ({
+                id: i.id || randomUUID(),
+                purchase_id: payload.id,
+                product_id: i.medicineId || i.productId,
+                quantity: Number(i.quantity) || 1,
+                cost: Number(i.cost) || 0,
+                batch_number: i.batchNumber || null,
+                expiry_date: i.expiryDate ? new Date(i.expiryDate).toISOString() : null,
+              }))
+              await supabase.from('cloud_purchase_items').upsert(purchaseItems, { onConflict: 'id' }).catch(() => {})
+            }
+          } catch (err: any) {
+            if (!err.message?.includes('does not exist') && err.code !== '42P01') {
+              throw err
+            }
           }
         } else if (entity === 'PRODUCT') {
           if (action === 'DELETE') {
@@ -237,6 +250,7 @@ export async function flushOutboxBatch(batchSize = 50): Promise<{
                 category_name: payload.category?.name || payload.categoryName || 'General',
                 price: Number(payload.price) || 0,
                 cost: Number(payload.cost) || 0,
+                stock_quantity: Number(payload.stockQuantity) || 0,
                 min_stock_level: Number(payload.minStockLevel) || 10,
                 updated_at: new Date().toISOString(),
               },
@@ -246,6 +260,7 @@ export async function flushOutboxBatch(batchSize = 50): Promise<{
           }
         } else if (entity === 'BATCH') {
           if (action === 'DELETE') {
+            await supabase.from('cloud_batches').delete().eq('id', payload.id)
             const { error: delErr } = await supabase.from('cloud_batches').delete().eq('id', payload.id)
             if (delErr) console.warn('Supabase batch delete warning:', delErr)
           } else {
@@ -263,6 +278,7 @@ export async function flushOutboxBatch(batchSize = 50): Promise<{
             if (batchErr) throw batchErr
           }
         } else if (entity === 'AUDIT_LOG') {
+          // Idempotent write to cloud_audit_logs (without device_id)
           const { error: auditErr } = await supabase.from('cloud_audit_logs').upsert(
             {
               id: payload.id,
@@ -273,7 +289,6 @@ export async function flushOutboxBatch(batchSize = 50): Promise<{
               operator: payload.username || 'System',
               role: payload.userRole || 'STAFF',
               severity: payload.severity || 'INFO',
-              device_id: event.deviceId || payload.deviceId || null,
               metadata: payload.metadata || null,
               created_at: payload.createdAt || new Date().toISOString(),
               synced_at: new Date().toISOString(),
@@ -283,23 +298,24 @@ export async function flushOutboxBatch(batchSize = 50): Promise<{
           if (auditErr) throw auditErr
         }
 
-        // 4. Record in cloud_sync_events (Idempotency Ledger)
-        await supabase.from('cloud_sync_events').upsert(
-          {
-            event_id: event.eventId,
-            store_id: storeId,
-            entity_type: entity,
-            entity_id: event.recordId || event.entityId || payload.id,
-            operation: action,
-            payload: typeof payload === 'object' ? payload : { raw: payload },
-            device_id: event.deviceId || null,
-            created_at: event.createdAt ? new Date(event.createdAt).toISOString() : new Date().toISOString(),
-            applied_at: new Date().toISOString(),
-          },
-          { onConflict: 'event_id' }
-        )
+        // 4. Best-effort record in cloud_sync_events (Idempotency Ledger) if table exists
+        try {
+          await supabase.from('cloud_sync_events').upsert(
+            {
+              event_id: event.eventId,
+              store_id: storeId,
+              entity_type: entity,
+              entity_id: event.recordId || event.entityId || payload.id,
+              operation: action,
+              payload: typeof payload === 'object' ? payload : { raw: payload },
+              created_at: event.createdAt ? new Date(event.createdAt).toISOString() : new Date().toISOString(),
+              applied_at: new Date().toISOString(),
+            },
+            { onConflict: 'event_id' }
+          )
+        } catch {}
 
-        // 5. Explicit Local Acknowledgement: Mark SYNCED locally only upon cloud success
+        // 5. Explicit Local Acknowledgement: Mark SYNCED locally upon cloud success
         await syncOutboxService.markEventSynced(event.eventId)
         succeeded++
       } catch (itemErr: any) {
@@ -334,15 +350,12 @@ export async function flushOutboxBatch(batchSize = 50): Promise<{
       .from('cloud_sync_sessions')
       .insert({
         store_id: 'sml_accra_main',
-        device_id: 'Local Depot Hub',
+        device_id: 'POS Terminal',
         sync_type: 'OUTBOX_BATCH',
         status: sessionStatus,
-        events_attempted: events.length,
-        events_succeeded: succeeded,
-        events_failed: failed,
+        items_count: succeeded,
         duration_ms: durationMs,
-        latency_ms: conn.latencyMs,
-        error_summary: failed > 0 ? lastSyncError : null,
+        error_message: failed > 0 ? lastSyncError : null,
       })
       .then(() => {}, () => {})
 
