@@ -101,6 +101,14 @@ export async function createPurchase(input: CreatePurchaseInput) {
         deviceId: input.deviceId,
         notes: `Received from supplier ${purchase.supplier?.name || input.supplierId} (Batch: ${item.batchNumber})`,
       })
+
+      // Update medicine cost with latest supplier purchase cost
+      if (item.cost && Number(item.cost) > 0) {
+        await tx.medicine.update({
+          where: { id: item.medicineId },
+          data: { cost: Number(item.cost) },
+        }).catch(() => {})
+      }
     }
 
     // 3. Record Audit Log

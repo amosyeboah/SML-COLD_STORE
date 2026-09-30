@@ -655,6 +655,7 @@ async function seedInitialDataIfNeeded() {
 seedInitialDataIfNeeded()
 
 export const mobileApi = {
+  seedInitialDataIfNeeded: async () => seedInitialDataIfNeeded(),
   // Auth
   login: async (username: string, password: string) => {
     await fetchCloudStateMirrorsIfAvailable().catch(() => {})
@@ -1417,15 +1418,120 @@ export const mobileApi = {
   },
 
   // Purchases
-  getPurchases: async () => getItem<any[]>(STORAGE_KEYS.PURCHASES, []),
+  getPurchases: async () => {
+    const list = getItem<any[]>(STORAGE_KEYS.PURCHASES, [])
+    const suppliers = getItem<any[]>(STORAGE_KEYS.SUPPLIERS, [])
+    const medicines = getItem<any[]>(STORAGE_KEYS.MEDICINES, [])
+    const batches = getItem<any[]>(STORAGE_KEYS.BATCHES, [])
+
+    return list.map((p) => {
+      const sup = suppliers.find((s) => s.id === p.supplierId)
+      const enrichedItems = (p.items || []).map((item: any) => {
+        const med = medicines.find((m) => m.id === item.medicineId)
+        const itemBatches = batches.filter(
+          (b) => b.medicineId === item.medicineId && b.batchNumber?.toUpperCase() === (item.batchNumber || '').trim().toUpperCase()
+        )
+        return {
+          ...item,
+          medicine: item.medicine || med,
+          batches: item.batches && item.batches.length > 0 ? item.batches : (itemBatches.length > 0 ? itemBatches : [{
+            id: item.batchId || item.id,
+            batchNumber: item.batchNumber,
+            expiryDate: item.expiryDate,
+            quantity: item.quantity,
+          }]),
+        }
+      })
+      return {
+        ...p,
+        supplier: p.supplier || sup || { name: p.supplierName || 'Unknown Supplier' },
+        items: enrichedItems,
+      }
+    })
+  },
+
   createPurchase: async (data: any) => {
     const list = getItem<any[]>(STORAGE_KEYS.PURCHASES, [])
-    const newItem = { id: generateId(), date: new Date().toISOString(), ...data }
-    list.push(newItem)
+    const batches = getItem<any[]>(STORAGE_KEYS.BATCHES, [])
+    const medicines = getItem<any[]>(STORAGE_KEYS.MEDICINES, [])
+    const suppliers = getItem<any[]>(STORAGE_KEYS.SUPPLIERS, [])
+    const supplier = suppliers.find((s) => s.id === data.supplierId)
+
+    const purchaseId = data.id || generateId()
+    const now = new Date().toISOString()
+
+    // 1. Process items: create or increment batch stock, and record supplier purchase cost on product
+    const processedItems = (data.items || []).map((item: any) => {
+      const qty = Number(item.quantity) || 0
+      const cost = Number(item.cost) || 0
+      const batchNum = (item.batchNumber || '').trim().toUpperCase()
+
+      // Find or create batch
+      let existingBatch = batches.find(
+        (b) => b.medicineId === item.medicineId && b.batchNumber?.toUpperCase() === batchNum
+      )
+
+      if (existingBatch) {
+        existingBatch.quantity = (Number(existingBatch.quantity) || 0) + qty
+        if (item.expiryDate) existingBatch.expiryDate = item.expiryDate
+        if (cost > 0) existingBatch.cost = cost
+      } else {
+        existingBatch = {
+          id: generateId(),
+          medicineId: item.medicineId,
+          batchNumber: batchNum,
+          expiryDate: item.expiryDate,
+          quantity: qty,
+          cost: cost,
+          createdAt: now,
+          purchaseId: purchaseId,
+        }
+        batches.push(existingBatch)
+      }
+
+      // Record latest supplier purchase cost on medicine catalogue
+      const med = medicines.find((m) => m.id === item.medicineId)
+      if (med && cost > 0) {
+        med.cost = cost
+      }
+
+      return {
+        id: item.id || generateId(),
+        medicineId: item.medicineId,
+        quantity: qty,
+        cost: cost,
+        batchNumber: batchNum,
+        expiryDate: item.expiryDate,
+        batches: [existingBatch],
+        medicine: med,
+      }
+    })
+
+    // Save updated stock & medicines
+    setItem(STORAGE_KEYS.BATCHES, batches)
+    pushCloudStateMirror('STATE_BATCHES', 'BATCHES', 'batches', batches).catch(() => {})
+
+    setItem(STORAGE_KEYS.MEDICINES, medicines)
+    pushCloudStateMirror('STATE_MEDICINES', 'CATALOGUE', 'medicines', medicines).catch(() => {})
+
+    // 2. Record new Purchase
+    const newPurchase = {
+      id: purchaseId,
+      date: now,
+      status: 'RECEIVED',
+      supplierId: data.supplierId,
+      supplier: supplier || { name: 'Supplier' },
+      total: Number(data.total) || processedItems.reduce((acc, i) => acc + i.cost * i.quantity, 0),
+      items: processedItems,
+    }
+
+    list.unshift(newPurchase)
     setItem(STORAGE_KEYS.PURCHASES, list)
     pushCloudStateMirror('STATE_PURCHASES', 'PURCHASES', 'purchases', list).catch(() => {})
-    return newItem
+
+    return newPurchase
   },
+
   updatePurchase: async (id: string, data: any) => {
     const list = getItem<any[]>(STORAGE_KEYS.PURCHASES, [])
     const idx = list.findIndex(i => i.id === id)
@@ -1437,8 +1543,25 @@ export const mobileApi = {
     }
     throw new Error('Purchase not found')
   },
+
   deletePurchase: async (id: string) => {
     const list = getItem<any[]>(STORAGE_KEYS.PURCHASES, [])
+    const target = list.find((p) => p.id === id)
+    if (target && target.items) {
+      const batches = getItem<any[]>(STORAGE_KEYS.BATCHES, [])
+      for (const item of target.items) {
+        const batchNum = (item.batchNumber || '').trim().toUpperCase()
+        const batch = batches.find(
+          (b) => b.medicineId === item.medicineId && b.batchNumber?.toUpperCase() === batchNum
+        )
+        if (batch) {
+          batch.quantity = Math.max(0, (Number(batch.quantity) || 0) - (Number(item.quantity) || 0))
+        }
+      }
+      setItem(STORAGE_KEYS.BATCHES, batches)
+      pushCloudStateMirror('STATE_BATCHES', 'BATCHES', 'batches', batches).catch(() => {})
+    }
+
     const newList = list.filter(i => i.id !== id)
     setItem(STORAGE_KEYS.PURCHASES, newList)
     pushCloudStateMirror('STATE_PURCHASES', 'PURCHASES', 'purchases', newList).catch(() => {})

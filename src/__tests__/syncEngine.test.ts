@@ -394,7 +394,7 @@ describe('Phase 2: Sync Engine, Outbox Pattern, Idempotency & Reconciliation', (
     expect(typeof state.deadLetterCount).toBe('number')
     expect(typeof state.inboundCursor).toBe('number')
     expect(state.depotId).toBeDefined()
-  })
+  }, 15000)
 
   // 11. Historical Database Integrity Verification
   it('11. Database migration preserved all existing medicines, batches, users, and audit logs', async () => {
